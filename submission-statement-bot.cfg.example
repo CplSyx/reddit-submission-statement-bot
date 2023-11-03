@@ -1,6 +1,9 @@
 [DEFAULT]
 subreddit = SubReddit
 submission_statement_minimum_char_length = 100
+remove_posts = True
+
+[TEXT]
 removal_reason = We require that posters submit an explanation (a.k.a. a submission statement) for why their post fits the requirements for r/${DEFAULT:subreddit}. Your post has been removed as it is missing this requirement. \n\nIf you wish to share your post with the community, you will need to resubmit your link along with a submission statement of at least ${DEFAULT:submission_statement_minimum_char_length} characters.
 
 [CREDENTIALS]

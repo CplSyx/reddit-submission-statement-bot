@@ -11,6 +11,20 @@
 #3) If the user doesn't comply, SB deletes the post and notifies the user via a removal reason and a new sticky comment
 #4) If the user does comply, SB deletes the sticky and posts a new sticky comment saying like "user has provided following reason: [...], please report post if this doesn't fit the sub"
 
+# Edge cases 
+# 1) Ignore moderator actions?
+#       If a moderator has approved a post, we still require a SS
+#       If a moderator has removed a post - ignore it.
+
+# Rewrite
+    # janitor fetch_submissions 
+        # gets top submissions from the last day into self.submissions, excluding anything that has already been removed, or anything that has been moderator approved as this should override the bot
+    # janitor handle_posts 
+        # refreshes the existing list which updates the status of approval/removal
+        # removes any newly approved/removed posts from the list
+        # prunes submissions to get to a proper working list
+        # checks post
+
 #The current logic as per the code below 2023-11-02
     # janitor fetch_submissions gets submissions in last 30 minutes into self.submissions
     # janitor fetch_unmoderated gets whatever is in the modqueue
@@ -111,7 +125,7 @@ class SubredditSettings:
 class SSBSettings(SubredditSettings):
     def __init__(self):
         super().__init__()
-        self.removal_reason = cfg['DEFAULT']['removal_reason']
+        self.removal_reason = cfg['TEXT']['removal_reason']
         self.submission_statement_minimum_char_length = cfg['DEFAULT']['submission_statement_minimum_char_length']
         self.report_insufficient_length = True
         self.pin_submission_statement = True
@@ -247,9 +261,11 @@ class Post:
         self._submission = praw.models.Submission(reddit, id = self._submission.id)
 
     def serviced_by_janitor(self, janitor_name):
-        # return true if there is a top level comment left by the Janitor
+        # ~return true if there is a top level comment left by the Janitor~
         # don't care if stickied, another mod may have unstickied a comment
         
+        # if we are using janitor comments to ask for responses, we can't just rely on a top-level janitor comment to say it's been serviced. We need to look for specific details *in* that comment.
+
         
         if self._post_was_serviced:
             return True
@@ -330,23 +346,23 @@ class Janitor:
 
 
     def fetch_submissions(self):
-        '''
-        will want to split this into checking moderated posts and unmoderated ones,
-        why? because the jannie should double check if a mod approved by accident
-        (hey, mistakes happen). In this case, it could be reported for false approval
-        '''
-        one_hour_ago = datetime.utcnow() - timedelta(hours=1, minutes=0)
-        one_hour_ago = calendar.timegm(one_hour_ago.utctimetuple())
         submissions = set()
-        for post in self.subreddit.top(time_filter="day"):
-            #if post.created_utc > one_hour_ago:
-            #    submissions.add(Post(post))
-            submissions.add(Post(post, self.sub_settings.submission_statement_time_limit_minutes))
+        newposts = self.subreddit.top(time_filter="day")
+            # we could use self.subreddit.new() but this would return 1000 posts and we won't get 1000 posts a day so this will give us a shorter list
+        for post in newposts:
 
-        self.submissions = submissions
-        return submissions # for testing, probably don't care about return value
+            # we don't care about posts that have already been removed or if they have been moderator approved as that overrules the SS bot
+            if not (post.is_moderator_approved() or post.is_post_removed()):
+                submissions.add(Post(post))
 
+        #self.submissions = submissions
+        return submissions
+    
+    def update_submission_list(self):
+        self.submissions = self.fetch_submissions()
 
+# We don't want to ignore all unmoderated posts, because we still want to put a SS reminder on them even if they're in the queue. 
+# Think in that case we don't need the following code.
     def fetch_unmoderated(self):
         # loop through filtered posts, want to remove shit without submission statements
         unmoderated = set()
@@ -364,7 +380,7 @@ class Janitor:
         self.submissions = self.submissions - unmoderated
         return unmoderated 
 
-
+# Next block won't be needed as we're already ignoring mod approved or removed posts
     def prune_unmoderated(self):
         # want to remove submissions from running list that have been checked 
         # for submission statement, that are no longer unmoderated
@@ -376,6 +392,8 @@ class Janitor:
             if post.is_moderator_approved() or post.is_post_removed():
                 self.unmoderated.remove(post)
 
+# This is about flagging "old" posts without actions. Do we care?
+# Need to include a removal of the removed/approved posts here after the refresh
     def prune_submissions(self):
         self.refresh_posts()
 
@@ -402,7 +420,9 @@ class Janitor:
 
     def handle_posts(self):
         self.refresh_posts()
-        all_posts = self.submissions.union(self.unmoderated)
+        self.prune_submissions()
+
+        all_posts = self.submissions #.union(self.unmoderated)
         
         for post in all_posts:
             print(f"checking post: {post._submission.title}\n\t{post._submission.permalink}...")
@@ -471,7 +491,22 @@ class Janitor:
 
                 # indicate post serviced by Janitor
 
- 
+def go():
+    # Settings load
+    fs = SSBSettings()
+    jannie = Janitor(cfg['DEFAULT']['subreddit'])
+    jannie.set_subreddit_settings(fs)
+    while True:
+        try:
+            jannie.update_submission_list()
+
+            # Wait 5 minutes (300 seconds)
+            time.sleep(300)
+
+        except Exception as e:
+            print(repr(e))
+            print("\n")
+            print("Restarting...\n")
 
 def run_forever():
     five_min = 60 * 5
@@ -482,7 +517,7 @@ def run_forever():
             fs = SSBSettings()
             jannie = Janitor(cfg['DEFAULT']['subreddit'])
             jannie.set_subreddit_settings(fs)
-            jannie.fetch_submissions()
+            jannie.update_submission_list()
             jannie.fetch_unmoderated()
             counter = 1
             while True:
@@ -514,7 +549,7 @@ def run():
         fs = SSBSettings()
         jannie = Janitor(cfg['DEFAULT']['subreddit'])
         jannie.set_subreddit_settings(fs)
-        jannie.fetch_submissions()
+        jannie.update_submission_list()
         jannie.fetch_unmoderated()
         counter = 1
         while True:
@@ -542,7 +577,7 @@ def run_once():
     jannie.set_subreddit_settings(fs)
     #posts = jannie.fetch_submissions()
     #unmoderated = jannie.fetch_unmoderated()
-    jannie.fetch_submissions()
+    jannie.update_submission_list()
     jannie.handle_posts()
     #for post in posts:
     #    print(post.title)
