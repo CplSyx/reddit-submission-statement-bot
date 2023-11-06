@@ -1,6 +1,7 @@
 [DEFAULT]
 subreddit = SubReddit
 submission_statement_minimum_char_length = 100
+pin_submission_statement = False
 remove_posts = True
 
 [TEXT]

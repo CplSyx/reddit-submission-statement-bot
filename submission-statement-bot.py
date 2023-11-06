@@ -22,8 +22,13 @@
     # janitor handle_posts 
         # refreshes the existing list which updates the status of approval/removal
         # removes any newly approved/removed posts from the list
-        # prunes submissions to get to a proper working list
-        # checks post
+        # prunes submissions to get to a proper working list (prune_submissions needs to be reworked)
+        # checks post via "serviced_by_janitor", which we use to determine if any action is needed
+        # validate_submission_statement - 177 - needs a total rework
+        # if "serviced" then we check for a valid SS already set (note, this is currently an in-memory value. Need to ensure the later steps don't cause duplication of pinned comment etc)
+        # if no SS already then check for one 
+        ##############CURRENTLY WORKING SECTION 447
+
 
 #The current logic as per the code below 2023-11-02
     # janitor fetch_submissions gets submissions in last 30 minutes into self.submissions
@@ -89,12 +94,12 @@ class SubredditSettings:
     def __init__(self):
         # list of flair text, in lower case
         self.low_effort_flair = []
-        self.removal_reason = "Your post has been removed due to a missing submission statement"
+        self.removal_reason = cfg['TEXT']['removal_reason']
         self.submission_statement_time_limit_minutes = timedelta(hours=0, minutes=30)
         self.submission_statement_minimum_char_length = cfg['DEFAULT']['submission_statement_minimum_char_length']
         self.report_insufficient_length = False
         self.report_old_posts = False
-        self.pin_submission_statement = False
+        self.pin_submission_statement = cfg['DEFAULT']['pin_submission_statement']
 
     def post_has_low_effort_flair(self, post):
         flair = post._submission.link_flair_text
@@ -128,7 +133,7 @@ class SSBSettings(SubredditSettings):
         self.removal_reason = cfg['TEXT']['removal_reason']
         self.submission_statement_minimum_char_length = cfg['DEFAULT']['submission_statement_minimum_char_length']
         self.report_insufficient_length = True
-        self.pin_submission_statement = True
+        self.pin_submission_statement = cfg['DEFAULT']['pin_submission_statement']
 
     def submission_statement_pin_text(self, ss):
         # construct a message to pin, by quoting OP's submission statement
@@ -265,6 +270,7 @@ class Post:
         # don't care if stickied, another mod may have unstickied a comment
         
         # if we are using janitor comments to ask for responses, we can't just rely on a top-level janitor comment to say it's been serviced. We need to look for specific details *in* that comment.
+        # But we CAN still use this thread to determine if no action has been taken.
 
         
         if self._post_was_serviced:
@@ -425,26 +431,33 @@ class Janitor:
         all_posts = self.submissions #.union(self.unmoderated)
         
         for post in all_posts:
-            print(f"checking post: {post._submission.title}\n\t{post._submission.permalink}...")
-            if post.serviced_by_janitor(self.username) or post._submission_statement_validated:
-                print("\tPost already serviced")
-                continue           
+            print(f"Checking post: {post._submission.title}\n\t{post._submission.permalink}...")
 
-            # has the time limit expired?
+            if post.serviced_by_janitor(self.username):
+                print("\tPost has been serviced")
+                # We've interacted with this post before
+
+            if post._submission_statement_validated:
+                print("\tSubmission statement validated")
+                # We've checked the SS and it's good - skip
+                continue              
+
+            # So at this point the post either hasn't been seen at all, or it hasn't had the SS validated.
+            # First let's check for a valid SS
             if post.has_time_expired():
                 print("\tTime has expired")
                 # check if there is a submission statement
                 # yes -> 
                 if post.validate_submission_statement():
                     if not post._submission_statement:
-                        print("_____________NO SS FOUND__________ DEBUG__________")
-                        print(f"post is self? {post._submission.is_self}")
-                        print(f"post is validated? {post._submission_statement_validated}")
-                        raise Exception("invalid state")
+                        print("No submission statement")
+                        ###### Action here to remove post
+                        continue
                     print("\tPost has submission statement")
-                    # pin submission statement, if subreddit settings require it
+
+                    # We need to delete our original comment and pin the submission statement. This logic here is currently incorrect.
                     if self.sub_settings.pin_submission_statement:
-                        post.reply_to_post(self.sub_settings.submission_statement_pin_text(post._submission_statement), pin=True, lock=True)
+                        post.reply_to_post(self.sub_settings.submission_statement_pin_text(post._submission_statement), pin=self.sub_settings.pin_submission_statement, lock=True)
                         print(f"\tPinning submission statement: \n\t{post._submission.title}\n\t{post._submission.permalink}")
 
                     # does the submission statement have the required length?
