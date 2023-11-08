@@ -15,6 +15,8 @@
 # 1) Ignore moderator actions?
 #       If a moderator has approved a post, we still require a SS
 #       If a moderator has removed a post - ignore it.
+# 2) Moderator posts 
+#       If a moderator makes a post and it is distinguished as such (i.e. a top level sticky etc.) then we should ignore it.
 
 # Rewrite
     # janitor fetch_submissions 
@@ -24,9 +26,12 @@
         # removes any newly approved/removed posts from the list
         # prunes submissions to get to a proper working list (prune_submissions needs to be reworked)
         # checks post via "serviced_by_janitor", which we use to determine if any action is needed
-        # validate_submission_statement - 177 - needs a total rework
+        # validate_submission_statement - 177 - needs a total rework (Done I think? now candidate_submission_statement)
         # if "serviced" then we check for a valid SS already set (note, this is currently an in-memory value. Need to ensure the later steps don't cause duplication of pinned comment etc)
-        # if no SS already then check for one 
+        # if no SS already then check the time - do we need to ac
+        # if the time limit has passed, check for a valid SS
+        # check the length, if too short remove/report
+        # otherwise assume it's good and we will need to post the SS as a comment
         ##############CURRENTLY WORKING SECTION 447
 
 
@@ -98,6 +103,7 @@ class SubredditSettings:
         self.submission_statement_time_limit_minutes = timedelta(hours=0, minutes=30)
         self.submission_statement_minimum_char_length = cfg['DEFAULT']['submission_statement_minimum_char_length']
         self.report_insufficient_length = False
+        self.remove_posts = cfg['DEFAULT']['remove_posts']
         self.report_old_posts = False
         self.pin_submission_statement = cfg['DEFAULT']['pin_submission_statement']
 
@@ -129,11 +135,13 @@ class SubredditSettings:
 
 class SSBSettings(SubredditSettings):
     def __init__(self):
-        super().__init__()
+        super().__init__() #Why? We can just use this class can't we?
         self.removal_reason = cfg['TEXT']['removal_reason']
         self.submission_statement_minimum_char_length = cfg['DEFAULT']['submission_statement_minimum_char_length']
         self.report_insufficient_length = True
-        self.pin_submission_statement = cfg['DEFAULT']['pin_submission_statement']
+        self.remove_posts = cfg['DEFAULT'].getboolean('remove_posts')
+        self.pin_submission_statement = cfg['DEFAULT'].getboolean('pin_submission_statement')
+        
 
     def submission_statement_pin_text(self, ss):
         # construct a message to pin, by quoting OP's submission statement
@@ -157,7 +165,6 @@ class Post:
         self._created_time = datetime.utcfromtimestamp(submission.created_utc)
         self._submission_statement_validated = False
         self._submission_statement = None
-        self._is_text_post = False
         self._post_was_serviced = False
         if submission.is_self:
             self._is_text_post = True
@@ -178,33 +185,43 @@ class Post:
     def __str__(self):
         return f"{self._submission.permalink} | {self._submission.title}"
 
-    def validate_submission_statement(self):#, min_length):
-        # identify and validate submission statement
+    def candidate_submission_statement(self):
+        # identify a possible submission statement
 
         # return early if these checks already ran, and ss is proper
         if self._submission_statement_validated:
             #print("\tsubmission statement validated")
             return True
-
-        # 1.) exempt text posts from this rule
-        if self._submission.is_self:
-            self._is_text_post = True 
-            self._submission_statement_validated = True
-            self._submission_statement = None
-            # technically False, but True indicates everything is good, do not remove post
-            #print("\tsubmission statement is self post; validated")
+        
+        # 0.) Is the post is distinguished? If so, it is assumed to be made in "official capacity" and can be ignored by SSbot
+        if self._submission.distinguished:
+            self._submission_statement_validated = True 
+            print("\tPost is distinguished - ignoring")
             return True
 
+        # 1.) exempt text posts from this rule 
+        # REMOVED. Why should text posts be excluded?
+        #if self._submission.is_self:
+        #    self._is_text_post = True 
+        #    self._submission_statement_validated = True
+        #    self._submission_statement = None
+        #    # technically False, but True indicates everything is good, do not remove post
+        #    #print("\tsubmission statement is self post; validated")
+        #    return True
+
         # 2.) identify candidate submission statements. 
-        # OP could have 1 or more top level replies
+        # We need to find the SS bot's comment, and then look at the replies to it
+        # submission.comments is a CommentForest (A forest of comments starts with multiple top-level comments.) meaning we can address top level comments and their replies
         ss_candidates = []
-        for reply in self._submission.comments:
-            if reply.is_submitter:
-                ss_candidates.append(reply)
+        for top_level_comment in self._submission.comments:
+            if top_level_comment.author.name is cfg['CREDENTIALS']['username']:
+                # found the bot comment, take the replies as SS candidates
+                for reply in top_level_comment.replies:
+                    if reply.is_submitter:
+                        ss_candidates.append(reply)
 
         # no SS
         if len(ss_candidates) == 0:
-            self._is_text_post = False
             self._submission_statement_validated = False
             self._submission_statement = None
             #print("\tno submission statement identified; not validated")
@@ -213,18 +230,16 @@ class Post:
         # one or more possible SS's
         if len(ss_candidates) == 1:
             self._submission_statement = ss_candidates[0]
-            self._is_text_post = False
-            self._submission_statement_validated = True
+            #self._submission_statement_validated = True
             #print("\tsubmission statement identified from single comment; validated")
             return True
         else:
             for candidate in ss_candidates:
                 text = candidate.body
                 text = text.lower().strip().split()
+
+                # post author may have said "submission statement" in their comment, makes life easy
                 if "submission" in text and "statement" in text:
-                    self._submission_statement = candidate
-                    break
-                elif "ss" in text:
                     self._submission_statement = candidate
                     break
 
@@ -236,20 +251,8 @@ class Post:
                     self._submission_statement = candidate
             #print("\tsubmission statement identified from multiple comments; validated")
             self._is_text_post = False
-            self._submission_statement_validated = True 
+            #self._submission_statement_validated = True 
             return True
-
-        # this check is actually done later
-        # just check to see if a submission statement exists
-        ## 3.) check if submission statement is of proper length
-        #if self._submission_statement and (len(self._submission_statement.body) >= min_length):
-        #    self._submission_statement_validated = True 
-        #    return True
-
-        # unable to validate submission statement
-        #print("\tunknown case occurred; no submission statement found; not validated")
-        self._submission_statement_validated = False
-        return False
 
     def has_time_expired(self):
         # True or False -- has the time expired to add a submission statement?
@@ -443,43 +446,44 @@ class Janitor:
                 continue              
 
             # So at this point the post either hasn't been seen at all, or it hasn't had the SS validated.
-            # First let's check for a valid SS
-            if post.has_time_expired():
-                print("\tTime has expired")
-                # check if there is a submission statement
-                # yes -> 
-                if post.validate_submission_statement():
-                    if not post._submission_statement:
-                        print("No submission statement")
-                        ###### Action here to remove post
-                        continue
-                    print("\tPost has submission statement")
 
-                    # We need to delete our original comment and pin the submission statement. This logic here is currently incorrect.
-                    if self.sub_settings.pin_submission_statement:
-                        post.reply_to_post(self.sub_settings.submission_statement_pin_text(post._submission_statement), pin=self.sub_settings.pin_submission_statement, lock=True)
-                        print(f"\tPinning submission statement: \n\t{post._submission.title}\n\t{post._submission.permalink}")
+            # First let's see if we need to do anything
+            if post.has_time_expired():
+                print("\tTime has expired - taking action")
+                
+                # check if there is a submission statement                
+                if post.candidate_submission_statement():
+                    print("\tPost has submission statement")                    
 
                     # does the submission statement have the required length?
-                    #   yes -> (NOP)
                     #   no -> report or remove, depending on subreddit settings
+                    #   yes -> remove bot comment and pin reason
                     if not len(post._submission_statement.body) >= self.sub_settings.submission_statement_minimum_char_length:
-                        reason = "Submission statement is too short"
-                        if self.sub_settings.report_insufficient_length:
-                            post.report_post(reason)
-                            print(f"\tReporting post: \n\t{post._submission.title}\n\t{post._submission.permalink}")
-                            print(f"\tReason: {reason}\n---\n")
-                        else:
-                            post.remove_post(self.sub_settings.removal_reason, reason)
+                        removal_note = "Submission statement is too short"
+                        if self.sub_settings.remove_posts:
+                            post.remove_post(self.sub_settings.removal_reason, removal_note)
                             print(f"\tRemoving post: \n\t{post._submission.title}\n\t{post._submission.permalink}")
-                            print(f"\tReason: {reason}\n---\n")
+                            print(f"\tReason: {removal_note}\n---\n")
+                        else:                            
+                            post.report_post(removal_note)
+                            print(f"\tReporting post: \n\t{post._submission.title}\n\t{post._submission.permalink}")
+                            print(f"\tReason: {removal_note}\n---\n")
                     else:
-                        #print(f"\tSS has proper length: \n\t{post._submission.title}\n\t{post._submission.permalink}")
                         print(f"\tSS has proper length \n\t{post._submission.permalink}")
+
+                        # We need to delete our original comment and pin the submission statement. This logic here is currently incorrect.
+
+                        # get all comments on the post
+                        # identify where the submission bot has made a comment
+                        # delete it and all replies to it
+                        # construct the comment for the submission statement
+                        # comment it and pin it (setting)
+                        post.reply_to_post(self.sub_settings.submission_statement_pin_text(post._submission_statement), pin=self.sub_settings.pin_submission_statement, lock=True)
+                        print(f"\tPinning submission statement: \n\t{post._submission.title}\n\t{post._submission.permalink}")
                 else:
-                    print("\tpost does NOT have submission statement")
+                    print("\tPost does NOT have submission statement")
                     now = datetime.utcnow()
-                    # did a mod approve, or is it more than 1 day old?
+                    # did a mod approve, or is it more than 1 day old? #DO WE CARE?
                     #   yes -> report 
                     #   no -> remove and pin removal reason
                     if post._created_time + timedelta(hours=24, minutes=0) < now:
@@ -500,9 +504,9 @@ class Janitor:
                 post._post_was_serviced = True
 
             else:
-                print("\tTime has not expired")
+                print("\tTime has not expired - skipping post")
 
-                # indicate post serviced by Janitor
+                
 
 def go():
     # Settings load
