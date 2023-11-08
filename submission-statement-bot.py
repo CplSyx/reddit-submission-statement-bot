@@ -13,10 +13,10 @@
 
 # Edge cases 
 # 1) Ignore moderator actions?
-#       If a moderator has approved a post, we still require a SS
-#       If a moderator has removed a post - ignore it.
+#      DONE (I think, this is normal behaviour so we just haven't included a specific scenario for "approved" posts) If a moderator has approved a post, we still require a SS
+#      DONE If a moderator has removed a post - ignore it.
 # 2) Moderator posts 
-#       If a moderator makes a post and it is distinguished as such (i.e. a top level sticky etc.) then we should ignore it.
+#      DONE If a moderator makes a post and it is distinguished as such (i.e. a top level sticky etc.) then we should ignore it.
 
 # Rewrite
     # janitor fetch_submissions 
@@ -28,11 +28,13 @@
         # checks post via "serviced_by_janitor", which we use to determine if any action is needed
         # validate_submission_statement - 177 - needs a total rework (Done I think? now candidate_submission_statement)
         # if "serviced" then we check for a valid SS already set (note, this is currently an in-memory value. Need to ensure the later steps don't cause duplication of pinned comment etc)
-        # if no SS already then check the time - do we need to ac
+        # if no SS already then check the time - do we need to act
         # if the time limit has passed, check for a valid SS
         # check the length, if too short remove/report
         # otherwise assume it's good and we will need to post the SS as a comment
-        ##############CURRENTLY WORKING SECTION 447
+#### VALIDATE COMPLETE FLOW NOW AND REWRITE ABOVE
+# Todo: Tidy up settings classes - why do we have two
+# Remove any unused code 
 
 
 #The current logic as per the code below 2023-11-02
@@ -100,12 +102,16 @@ class SubredditSettings:
         # list of flair text, in lower case
         self.low_effort_flair = []
         self.removal_reason = cfg['TEXT']['removal_reason']
+        self.submission_statement_request_text = cfg['TEXT']['submission_statement_request']
+
         self.submission_statement_time_limit_minutes = timedelta(hours=0, minutes=30)
         self.submission_statement_minimum_char_length = cfg['DEFAULT']['submission_statement_minimum_char_length']
-        self.report_insufficient_length = False
-        self.remove_posts = cfg['DEFAULT']['remove_posts']
-        self.report_old_posts = False
-        self.pin_submission_statement = cfg['DEFAULT']['pin_submission_statement']
+        self.report_insufficient_length = True
+        self.remove_posts = cfg['DEFAULT'].getboolean('remove_posts')
+        self.pin_submission_statement_request = cfg['DEFAULT'].getboolean('pin_submission_statement_request')
+        self.pin_submission_statement_response = cfg['DEFAULT'].getboolean('pin_submission_statement_response')
+        self.remove_request_comment = cfg['DEFAULT'].getboolean('bot_cleanup')
+
 
     def post_has_low_effort_flair(self, post):
         flair = post._submission.link_flair_text
@@ -137,11 +143,13 @@ class SSBSettings(SubredditSettings):
     def __init__(self):
         super().__init__() #Why? We can just use this class can't we?
         self.removal_reason = cfg['TEXT']['removal_reason']
+        self.submission_statement_request_text = cfg['TEXT']['submission_statement_request']
         self.submission_statement_minimum_char_length = cfg['DEFAULT']['submission_statement_minimum_char_length']
         self.report_insufficient_length = True
         self.remove_posts = cfg['DEFAULT'].getboolean('remove_posts')
-        self.pin_submission_statement = cfg['DEFAULT'].getboolean('pin_submission_statement')
-        
+        self.pin_submission_statement_request = cfg['DEFAULT'].getboolean('pin_submission_statement_request')
+        self.pin_submission_statement_response = cfg['DEFAULT'].getboolean('pin_submission_statement_response')
+        self.remove_request_comment = cfg['DEFAULT'].getboolean('bot_cleanup')
 
     def submission_statement_pin_text(self, ss):
         # construct a message to pin, by quoting OP's submission statement
@@ -297,11 +305,11 @@ class Post:
         self._submission_statement.report(reason)
         self._post_was_serviced = True
 
-    def reply_to_post(self, reason, pin=True, lock=False):
-        removal_comment = self._submission.reply(reason)
-        removal_comment.mod.distinguish(sticky=pin)
+    def reply_to_post(self, text, pin=True, lock=False):
+        posted_comment = self._submission.reply(text)
+        posted_comment.mod.distinguish(sticky=pin)
         if lock:
-            removal_comment.mod.lock()
+            posted_comment.mod.lock()
         self._post_was_serviced = True
 
 
@@ -323,7 +331,7 @@ class Janitor:
         self.reddit = praw.Reddit(
                         client_id = cfg['CREDENTIALS']['client_id'],
                         client_secret = cfg['CREDENTIALS']['client_secret'],
-                        user_agent = "linux:mmm_submission_bot:v0.1",                        
+                        user_agent = "linux:reddit_submission_bot:v0.1",                        
                         username = cfg['CREDENTIALS']['username'],
                         password = cfg['CREDENTIALS']['password']
         )
@@ -360,8 +368,9 @@ class Janitor:
             # we could use self.subreddit.new() but this would return 1000 posts and we won't get 1000 posts a day so this will give us a shorter list
         for post in newposts:
 
-            # we don't care about posts that have already been removed or if they have been moderator approved as that overrules the SS bot
-            if not (post.is_moderator_approved() or post.is_post_removed()):
+            # we don't care about posts that have already been removed as the bot will not be able to override that
+            # we do still want posts that moderators have approved, as the approval may be due to other reports
+            if not (post.is_post_removed()):
                 submissions.add(Post(post))
 
         #self.submissions = submissions
@@ -425,8 +434,6 @@ class Janitor:
                     reason = "This post is over 12 hours old and has not been moderated. Please take a look!"
                     post.report_post(reason)
 
-
-
     def handle_posts(self):
         self.refresh_posts()
         self.prune_submissions()
@@ -436,22 +443,30 @@ class Janitor:
         for post in all_posts:
             print(f"Checking post: {post._submission.title}\n\t{post._submission.permalink}...")
 
-            if post.serviced_by_janitor(self.username):
-                print("\tPost has been serviced")
-                # We've interacted with this post before
+            if not post.serviced_by_janitor(self.username):
+                print("\tNew post - requesting submission statement from user")
+                # Here we have to request the submission statement from the author, and move on
+                text = "Submission Statement Request\n\n" + self.sub_settings.submission_statement_request_text
+                post.reply_to_post(text, pin=self.sub_settings.pin_submission_statement_request, lock=False)
+                post._post_was_serviced = True
+                continue
+
+            else:
+                print("\tSubmission statement already requested")    
+                # We've interacted with this post before, so can check the SS
 
             if post._submission_statement_validated:
                 print("\tSubmission statement validated")
-                # We've checked the SS and it's good - skip
+                # We've checked the SS already and it's good - skip this post
                 continue              
 
-            # So at this point the post either hasn't been seen at all, or it hasn't had the SS validated.
+            # So at this point the post hasn't had the SS validated.
 
             # First let's see if we need to do anything
             if post.has_time_expired():
                 print("\tTime has expired - taking action")
                 
-                # check if there is a submission statement                
+                # Check if there is a submission statement                
                 if post.candidate_submission_statement():
                     print("\tPost has submission statement")                    
 
@@ -471,15 +486,30 @@ class Janitor:
                     else:
                         print(f"\tSS has proper length \n\t{post._submission.permalink}")
 
-                        # We need to delete our original comment and pin the submission statement. This logic here is currently incorrect.
+                        # We need to delete our original comment and pin the submission statement. 
 
-                        # get all comments on the post
-                        # identify where the submission bot has made a comment
-                        # delete it and all replies to it
-                        # construct the comment for the submission statement
-                        # comment it and pin it (setting)
-                        post.reply_to_post(self.sub_settings.submission_statement_pin_text(post._submission_statement), pin=self.sub_settings.pin_submission_statement, lock=True)
-                        print(f"\tPinning submission statement: \n\t{post._submission.title}\n\t{post._submission.permalink}")
+                        for top_level_comment in self._submission.comments:
+                            if top_level_comment.author.name is cfg['CREDENTIALS']['username'] and "Submission Statement Request" in top_level_comment.body:
+
+                                # found the bot's request for a SS, delete it if it's the submission request or just remove the pin if there is one set (depending on the config) 
+                                if self.sub_settings.remove_request_comment:
+
+                                    # Remove all the comment's replies and delete the bot comment
+                                    post._submission.comments.replace_more() # Resolves the "More comments" text to get all comments
+                                    for comment in top_level_comment.replies.list():
+                                        # list(): Return a flattened list of all comments. (awesome - no recursion needed!)
+                                        comment.mod.remove()
+
+                                    top_level_comment.delete()
+
+                                else:
+                                    # Just remove any sticky that's been set
+                                    top_level_comment.stickied = False
+
+                                # Check this to ensure it constructs the correct comment
+                                post.reply_to_post(self.sub_settings.submission_statement_pin_text(post._submission_statement), pin=self.sub_settings.pin_submission_statement, lock=True)
+                                print(f"\tPinning submission statement: \n\t{post._submission.title}\n\t{post._submission.permalink}")
+
                 else:
                     print("\tPost does NOT have submission statement")
                     now = datetime.utcnow()
