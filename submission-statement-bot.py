@@ -18,7 +18,9 @@
 # 2) Moderator posts 
 #      DONE If a moderator makes a post and it is distinguished as such (i.e. a top level sticky etc.) then we should ignore it.
 # 3) Too many posts...
-#       What if we get an influx of posts and we can't deal with them all? At the moment every single post is reprocessed fully. We need to prune the "submission" list to remove anything that the bot has already validated before it hits handle_posts - ideally in update_submission_list
+#      DONE What if we get an influx of posts and we can't deal with them all? At the moment every single post is reprocessed fully. We need to prune the "submission" list to remove anything that the bot has already validated before it hits handle_posts - ideally in update_submission_list
+# 4) Keyword requirement - IRTR etc.
+#       Implement a list of required words in the submission statement to avoid bots gaming the system and that people read the rules etc.
 
 # Rewrite
     # janitor fetch_submissions 
@@ -153,6 +155,7 @@ class SSBSettings(SubredditSettings):
         self.pin_submission_statement_request = cfg['DEFAULT'].getboolean('pin_submission_statement_request')
         self.pin_submission_statement_response = cfg['DEFAULT'].getboolean('pin_submission_statement_response')
         self.submission_reply_spoiler = cfg['DEFAULT'].getboolean('use_spolier_tags')
+        self.required_words = cfg['DEFAULT'].getlist('required_words_in_submission_statement')
 
     def submission_statement_quote_text(self, ss, spoilers):
         # Construct the quoted message, by quoting OP's submission statement
@@ -341,7 +344,7 @@ class Janitor:
         self.reddit = praw.Reddit(
                         client_id = cfg['CREDENTIALS']['client_id'],
                         client_secret = cfg['CREDENTIALS']['client_secret'],
-                        user_agent = "linux:reddit_submission_bot:v0.1",                        
+                        user_agent = "linux:reddit_submission_bot:v1.0",                        
                         username = cfg['CREDENTIALS']['username'],
                         password = cfg['CREDENTIALS']['password']
         )
@@ -351,10 +354,8 @@ class Janitor:
         self.submissions = set()
         self.unmoderated = set()
         self.sub_settings = SubredditSettings()
-
-        self._last_submission_check_time = None
-        self._last_unmoderated_check_time = None
-
+        self.startup_time = datetime.utcnow()
+        self.post_counter = 0
 
     def set_subreddit_settings(self, sub_settings):
         self.sub_settings = sub_settings
@@ -377,80 +378,28 @@ class Janitor:
         submissions = set()
         #newposts = self.subreddit.top(time_filter="day")
         newposts = self.subreddit.new()
-            # we could use self.subreddit.new() but this would return 1000 posts and we won't get 1000 posts a day so this will give us a shorter list
-            # was originally going to use subreddit.top but this doesn't return posts immediately when they're submitted, it takes time for Reddit to register them in the "top" list I suspect. So instead we use subreddit.new even though this will give a large list of results to process.
+            # Was originally going to use subreddit.top but this doesn't return posts immediately when they're submitted for some reason - it takes time for Reddit to register them in the "top" list I suspect. So instead we use subreddit.new even though this will give a larger list of results to process.
+            # Possibility we could limit the number of posts retrieved, but how would we know where to put that limit? Default is 1000 posts.
         for post in newposts:
-            print(post.title)
+            
             # we don't care about posts that have already been removed as the bot will not be able to override that
             # we do still want posts that moderators have approved, as the approval may be due to other reports
-            if not (post.removed):
+            # We also don't want posts created before the bot was started up - we're not interested in going back in time.
+            if not (post.removed) and datetime.utcfromtimestamp(post.created_utc) > self.startup_time:            
                 submissions.add(Post(post))
 
         #self.submissions = submissions
         return submissions
     
+
     def update_submission_list(self):
         retrieved_submissions = self.fetch_submissions()
-        self.submissions.union(retrieved_submissions) # We're adding to this list to ensure that we don't lose anything if there's a big influx of posts.
+        self.submissions = self.submissions.union(retrieved_submissions) # We're adding to this list to ensure that we don't lose anything if there's a big influx of posts. Union prevents duplicates.
         #TODO - Prune submissions here to remove anything we've already validated, or that we've already removed. Is it as simple as the following? CHECK!
         for post in self.submissions:
-            if post._submission_statement_validated or post.removed:
+            if post._submission_statement_validated or post._submission.removed:
                 self.submissions.remove(post)
 
-# We don't want to ignore all unmoderated posts, because we still want to put a SS reminder on them even if they're in the queue. 
-# Think in that case we don't need the following code.
-    def fetch_unmoderated(self):
-        # loop through filtered posts, want to remove shit without submission statements
-        unmoderated = set()
-        for post in self.mod.unmoderated():
-            # this might be the better one to loop through...
-            # why loop through stuff that's already been approved?
-            # useful only for double-checking mod actions...
-            print("__UNMODERATED__")
-            print(post._submission.title)
-            unmoderated.add(Post(post, self.sub_settings.submission_statement_time_limit_minutes))
-            self.unmoderated.add(Post(post, self.sub_settings.submission_statement_time_limit_minutes))
-
-        # want to remove items from submissions that are in unmoderated
-        # and leave unmoderated alone
-        self.submissions = self.submissions - unmoderated
-        return unmoderated 
-
-# Next block won't be needed as we're already ignoring mod approved or removed posts
-    def prune_unmoderated(self):
-        # want to remove submissions from running list that have been checked 
-        # for submission statement, that are no longer unmoderated
-        self.refresh_posts()
-
-        unmoderated = self.fetch_unmoderated()
-        moderated = self.unmoderated - unmoderated
-        for post in moderated:
-            if post.is_moderator_approved() or post.is_post_removed():
-                self.unmoderated.remove(post)
-
-# This is about flagging "old" posts without actions. Do we care?
-# Need to include a removal of the removed/approved posts here after the refresh
-    def prune_submissions(self):
-        self.refresh_posts()
-
-        last24h = self.fetch_submissions()
-        stale = self.submissions - last24h
-        for post in stale:
-            if post.is_moderator_approved() or post.is_post_removed():
-                self.unmoderated.remove(post)
-            else:
-                if self.sub_settings.report_old_posts:
-                    reason = "This post is over 24 hours old and has not been moderated. Please take a look!"
-                    self.report_post(reason)
-                self.unmoderated.remove(post)
-
-        # report anything over 12 hours old that hasn't been serviced
-        #if self.sub_settings.report_old_posts:
-        #    now = datetime.utcnow()
-        #    for post in self.submissions:
-        #        if post._created_time + timedelta(hours=12, minutes=0) < now:
-        #            reason = "This post is over 12 hours old and has not been moderated. Please take a look!"
-        #            post.report_post(reason)
 
     def handle_posts(self):
         print("Handling posts")
@@ -561,15 +510,16 @@ class Janitor:
                         reason = "no submission statement"
                         post.remove_post(self.sub_settings.removal_reason, reason)
                         print(f"\tRemoving post: \n\t{post._submission.title}\n\t{post._submission.permalink}")
-                        print(f"\tReason: {reason}\n---\n")
-
-                    
+                        print(f"\tReason: {reason}\n---\n")   
                     
                     post._post_was_serviced = True
 
             else:
                 print("\tTime has not expired - skipping post")
-        print("  Done.")
+            self.post_counter += 1
+        time_since_startup = datetime.utcnow() - self.startup_time
+        print("  Done. " + str(self.post_counter) + " posts processed in " + str(time_since_startup) + ".")
+        
                 
 
 def go():
@@ -585,18 +535,17 @@ def go():
                 jannie.update_submission_list()
                 # handle posts
                 jannie.handle_posts()
-                # every 5 min prune unmoderated
-                time.sleep(60)
 
-            # Wait 1 minute (60 seconds)
-            time.sleep(60)
+                # Wait
+                time.sleep(int(cfg['DEFAULT']['bot_interval']))
 
         except Exception as e:
             print(repr(e))
             print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno), type(e).__name__, e)
             print("\n")
             print("Restarting...\n")
-            time.sleep(5) #Pause to avoid a blocking loop
+            time.sleep(10) #Pause 10s to avoid a rapid/blocking loop
+
 
 def run_forever():
     five_min = 60 * 5
@@ -642,6 +591,7 @@ def run():
         jannie.fetch_unmoderated()
         counter = 1
         while True:
+            print("\n")
             # handle posts
             jannie.handle_posts()
             # every 5 min prune unmoderated
@@ -674,7 +624,7 @@ def run_once():
 
 
 if __name__ == "__main__":
-    cfg = ConfigParser(interpolation = ExtendedInterpolation())
+    cfg = ConfigParser(interpolation = ExtendedInterpolation(), converters={'list': lambda x: [i.strip() for i in x.split(',')] if len(x) > 0 else []})
     cfg.read("submission-statement-bot.cfg")
     #run_once()
     #run_forever()
