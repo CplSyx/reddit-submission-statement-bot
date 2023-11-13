@@ -86,15 +86,11 @@
 # - want bot to be easily configurable
 # - want a debug mode, so that collapsebot doesn't confuse people
 
-import calendar
 from configparser import ConfigParser, ExtendedInterpolation
 from datetime import datetime, timedelta
 import praw
 import time
-import sys
-
-
-
+import traceback
 
 ###############################################################################
 ###
@@ -116,25 +112,13 @@ class SubredditSettings:
         self.pin_submission_statement_response = cfg['DEFAULT'].getboolean('pin_submission_statement_response')
         self.remove_request_comment = cfg['DEFAULT'].getboolean('bot_cleanup')
 
-
-    def post_has_low_effort_flair(self, post):
-        flair = post._submission.link_flair_text
-        if not flair:
-            return False
-        if flair.lower() in self.low_effort_flair:
-            return True 
-        return False
-
-    def submitted_during_casual_hours(self, post):
-        return False
-
     def removal_text(self):
         return self.removal_reason
 
-    def submission_statement_quote_text(self, submission_statement):
-        # construct a message to pin, by quoting OP's submission statement
-        # submission_statement is a top level comment
-        return ""
+#    def submission_statement_quote_text(self, submission_statement):
+#        # construct a message to pin, by quoting OP's submission statement
+#        # submission_statement is a top level comment
+#        return ""
 
 
 ###############################################################################
@@ -157,21 +141,22 @@ class SSBSettings(SubredditSettings):
         self.submission_reply_spoiler = cfg['DEFAULT'].getboolean('use_spolier_tags')
         self.required_words = cfg['DEFAULT'].getlist('required_words_in_submission_statement')
 
-    def submission_statement_quote_text(self, ss, spoilers):
-        # Construct the quoted message, by quoting OP's submission statement
-
-        verbiage = f"The following submission statement was provided by u/{ss.author}:\n\n---\n\n"
-        if(spoilers):
-            verbiage = verbiage + ">!" + ss.body + "!<"
-        else:
-            verbiage = verbiage + ss.body
-        verbiage = verbiage + f"\n\n---\n\n Does this explain the post? Please report this post for moderator attention if not."
-        return verbiage
+#    def submission_statement_quote_text(self, ss, spoilers):
+#        # Construct the quoted message, by quoting OP's submission statement
+#
+#        verbiage = f"The following submission statement was provided by u/{ss.author}:\n\n---\n\n"
+#        if(spoilers):
+#            verbiage = verbiage + ">!" + ss.body + "!<"
+#        else:
+#            verbiage = verbiage + ss.body
+#        verbiage = verbiage + f"\n\n---\n\n Does this explain the post? Please report this post for moderator attention if not."
+#        return verbiage
 
 
 ###############################################################################
 ###
-### Helper class -- wrapper for PRAW submissions
+### Helper class -- wrapper for PRAW "submissions"
+### https://praw.readthedocs.io/en/stable/code_overview/models/submission.html
 ###
 ###############################################################################
 
@@ -201,7 +186,7 @@ class Post:
     def __str__(self):
         return f"{self._submission.permalink} | {self._submission.title}"
 
-    def candidate_submission_statement(self):
+    def candidate_submission_statement(self): #TODO this function needs tidying up
         # identify a possible submission statement
 
         # return early if these checks already ran, and ss is proper
@@ -271,14 +256,14 @@ class Post:
         return (self._created_time + timedelta(minutes=time_limit) < datetime.utcnow())
 
     def is_moderator_approved(self):
-        print(f"Moderator approved? {self._submission.approved}\n\t")
+        print(f"\tModerator approved? {self._submission.approved}")
         return self._submission.approved
 
     def is_post_removed(self):
         return self._submission.removed
 
     def refresh(self, reddit):
-        self._submission = praw.models.Submission(reddit, id = self._submission.id)
+        self._submission = praw.models.Submission(reddit, id = self._submission.id)    
 
     def submission_statement_validated(self, janitor_name):
         self._submission_statement_validated = False
@@ -312,18 +297,15 @@ class Post:
 
     def report_post(self, reason):
         self._submission.report(reason)
-        self._post_was_serviced = True
 
     def report_submission_statement(self, reason):
         self._submission_statement.report(reason)
-        self._post_was_serviced = True
 
     def reply_to_post(self, text, pin=True, lock=False):
         posted_comment = self._submission.reply(text)
         posted_comment.mod.distinguish(sticky=pin)
         if lock:
             posted_comment.mod.lock()
-        self._post_was_serviced = True
 
 
     def remove_post(self, reason, note):
@@ -355,10 +337,22 @@ class Janitor:
         self.unmoderated = set()
         self.sub_settings = SubredditSettings()
         self.startup_time = datetime.utcnow()
-        self.post_counter = 0
+        self.run_start_time = datetime.utcnow()
+        self.action_counter = 0
 
     def set_subreddit_settings(self, sub_settings):
         self.sub_settings = sub_settings
+
+    def submission_statement_quote_text(self, ss, spoilers):
+        # Construct the quoted message, by quoting OP's submission statement
+
+        verbiage = f"The following submission statement was provided by u/{ss.author}:\n\n---\n\n"
+        if(spoilers):
+            verbiage = verbiage + ">!" + ss.body + "!<"
+        else:
+            verbiage = verbiage + ss.body
+        verbiage = verbiage + f"\n\n---\n\n Does this explain the post? Please report for moderator attention if not. \n\n"
+        return verbiage
 
 
     def refresh_posts(self):
@@ -374,7 +368,8 @@ class Janitor:
 
 
     def fetch_submissions(self):
-        print("Fetching new submissions " + datetime.utcnow().strftime("%Y-%m-%d, %H:%M:%S"))
+        self.run_start_time = datetime.utcnow()
+        print("Fetching new submissions. Time now is: " + datetime.utcnow().strftime("%Y-%m-%d, %H:%M:%S") + " UTC")
         submissions = set()
         #newposts = self.subreddit.top(time_filter="day")
         newposts = self.subreddit.new()
@@ -396,10 +391,15 @@ class Janitor:
         retrieved_submissions = self.fetch_submissions()
         self.submissions = self.submissions.union(retrieved_submissions) # We're adding to this list to ensure that we don't lose anything if there's a big influx of posts. Union prevents duplicates.
         #TODO - Prune submissions here to remove anything we've already validated, or that we've already removed. Is it as simple as the following? CHECK!
+
+        # Iterate through the submissions list, mark anything we need to remove and then remove it.
+        submissions_to_remove = set()
         for post in self.submissions:
             if post._submission_statement_validated or post._submission.removed:
-                self.submissions.remove(post)
+                submissions_to_remove.add(post)
 
+        # Can't "live" remove items from self.submissions otherwise we'll hit a "Set changed size during iteration" error, so remove afterwards
+        self.submissions = self.submissions.difference(submissions_to_remove)
 
     def handle_posts(self):
         print("Handling posts")
@@ -411,7 +411,8 @@ class Janitor:
         for post in all_posts:
             print(f"  Checking post: {post._submission.title}\n\t{post._submission.permalink}...")
 
-            if post.submission_statement_validated(self.username):
+            if post.submission_statement_validated(self.username): 
+                #TODO _submission_statement_validated is causing some issues where we're checking but not correctly responding. Need to separate out "validated" as an action vs "valid" as a statement
                 # Already dealt with this one, skip
                 print("\tSubmission statement already validated")
                 continue
@@ -469,7 +470,7 @@ class Janitor:
 
                         # We need to post the submission statement response. 
                         
-                        post.reply_to_post(self.sub_settings.submission_statement_quote_text(post._submission_statement, self.sub_settings.submission_reply_spoiler), pin=self.sub_settings.pin_submission_statement_response, lock=True)
+                        post.reply_to_post(self.submission_statement_quote_text(post._submission_statement, self.sub_settings.submission_reply_spoiler), pin=self.sub_settings.pin_submission_statement_response, lock=True)
                         print(f"\tPinning submission statement: \n\t{post._submission.title}\n\t{post._submission.permalink}")
 
                         post._submission_statement_validated = True
@@ -493,7 +494,7 @@ class Janitor:
                                 top_level_comment.delete()
 
                                
-                    # did a mod approve, or is it more than 1 day old? #DO WE CARE?
+                    # did a mod approve, or is it more than 1 day old? #DO WE CARE? #TODO tidy this up for cases we want to manage
                     #   yes -> report 
                     #   no -> remove and pin removal reason
                     if post._created_time + timedelta(hours=24, minutes=0) < now:
@@ -507,7 +508,7 @@ class Janitor:
                         print(f"\tReporting post: \n\t{post._submission.title}\n\t{post._submission.permalink}")
                         print(f"\tReason: {reason}\n---\n")
                     else:
-                        reason = "no submission statement"
+                        reason = "No submission statement"
                         post.remove_post(self.sub_settings.removal_reason, reason)
                         print(f"\tRemoving post: \n\t{post._submission.title}\n\t{post._submission.permalink}")
                         print(f"\tReason: {reason}\n---\n")   
@@ -516,11 +517,16 @@ class Janitor:
 
             else:
                 print("\tTime has not expired - skipping post")
-            self.post_counter += 1
-        time_since_startup = datetime.utcnow() - self.startup_time
-        print("  Done. " + str(self.post_counter) + " posts processed in " + str(time_since_startup) + ".")
-        
-                
+            self.action_counter += 1
+
+        print("  Done in " + str(datetime.utcnow() - self.run_start_time) + ".")
+        print(str(self.action_counter) + " actions taken. Bot runtime " + str(datetime.utcnow() - self.startup_time) + ".")
+
+###############################################################################
+###
+### Script 
+###
+###############################################################################               
 
 def go():
     # Settings load
@@ -531,17 +537,21 @@ def go():
         try:
             
             while True:
+                print("- - -")   
+
                 # get submissions
                 jannie.update_submission_list()
+
                 # handle posts
                 jannie.handle_posts()
-
+                 
                 # Wait
                 time.sleep(int(cfg['DEFAULT']['bot_interval']))
 
         except Exception as e:
+            print("\n---ERROR---\n")
             print(repr(e))
-            print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno), type(e).__name__, e)
+            traceback.print_exc()
             print("\n")
             print("Restarting...\n")
             time.sleep(10) #Pause 10s to avoid a rapid/blocking loop
@@ -559,7 +569,8 @@ def run_forever():
             jannie.update_submission_list()
             jannie.fetch_unmoderated()
             counter = 1
-            while True:                
+            while True:          
+                print("\r\n")      
                 # handle posts
                 jannie.handle_posts()
                 # every 5 min prune unmoderated
@@ -591,7 +602,7 @@ def run():
         jannie.fetch_unmoderated()
         counter = 1
         while True:
-            print("\n")
+            print("\r\n")
             # handle posts
             jannie.handle_posts()
             # every 5 min prune unmoderated
