@@ -110,7 +110,7 @@ class SubredditSettings:
         self.remove_posts = cfg['DEFAULT'].getboolean('remove_posts')
         self.pin_submission_statement_request = cfg['DEFAULT'].getboolean('pin_submission_statement_request')
         self.pin_submission_statement_response = cfg['DEFAULT'].getboolean('pin_submission_statement_response')
-        self.remove_request_comment = cfg['DEFAULT'].getboolean('bot_cleanup')
+        self.remove_request_comment = cfg['DEFAULT'].getboolean('bot_cleanup') #TODO implement this
 
     def removal_text(self):
         return self.removal_reason
@@ -167,15 +167,7 @@ class Post:
         self._submission_statement_validated = False
         self._submission_statement = None
         self._post_was_serviced = False
-        #if submission.is_self:
-        #    self._is_text_post = True
-        #    self._post_was_serviced = True
         self._time_limit = timedelta(hours=0, minutes=time_limit_minutes)
-
-        # debugging
-        #print(submission.title)
-        #print("TIME EXPIRED?")
-        #print(self.has_time_expired())
 
     def __eq__(self, other):
         return self._submission.permalink == other._submission.permalink
@@ -243,7 +235,7 @@ class Post:
                     self._submission_statement = candidate
                     break
 
-                # otherwise, take the longest top level comment from OP
+                # otherwise, take the longest reply comment from OP
                 if self._submission_statement:
                     if len(candidate.body) > len(self._submission_statement.body):
                         self._submission_statement = candidate
@@ -266,7 +258,7 @@ class Post:
         self._submission = praw.models.Submission(reddit, id = self._submission.id)    
 
     def submission_statement_validated(self, janitor_name):
-        self._submission_statement_validated = False
+        #self._submission_statement_validated = False
         for comment in self._submission.comments:
             if comment and comment.author and comment.author.name and comment.body:
                 if comment.author.name == janitor_name and "submission statement was provided" in comment.body:
@@ -275,9 +267,6 @@ class Post:
         return self._submission_statement_validated
 
     def serviced_by_janitor(self, janitor_name):
-        # ~return true if there is a top level comment left by the Janitor~
-        # don't care if stickied, another mod may have unstickied a comment
-        
         # if we are using janitor comments to ask for responses, we can't just rely on a top-level janitor comment to say it's been serviced. We need to look for specific details *in* that comment.
         # But we CAN still use this thread to determine if no action has been taken.
 
@@ -347,6 +336,8 @@ class Janitor:
         # Construct the quoted message, by quoting OP's submission statement
 
         verbiage = f"The following submission statement was provided by u/{ss.author}:\n\n---\n\n"
+        # WARNING: the text phrase "submission statement was provided" is used as a verification of a bot reply later in the code. Do not change the above line in isolation.
+         
         if(spoilers):
             verbiage = verbiage + ">!" + ss.body + "!<"
         else:
@@ -471,8 +462,6 @@ class Janitor:
                         # We need to post the submission statement response. 
                         
                         post.reply_to_post(self.submission_statement_quote_text(post._submission_statement, self.sub_settings.submission_reply_spoiler), pin=self.sub_settings.pin_submission_statement_response, lock=True)
-                        print(f"\tPinning submission statement: \n\t{post._submission.title}\n\t{post._submission.permalink}")
-
                         post._submission_statement_validated = True
                         print("\tSubmission statement validated")
 
@@ -483,9 +472,9 @@ class Janitor:
                     # Remove original comment by the bot
                     for top_level_comment in post._submission.comments:
                             if top_level_comment.author.name == cfg['CREDENTIALS']['username'] and "Submission Statement Request" in top_level_comment.body: 
-                                #Do not use "is" as that compares in-memory objects to be the same object
+                                #Do not use "is" as that compares in-memory objects to be the same object, use == to compare values
 
-                                # found the bot's request for a SS
+                                # Found the bot's request for a SS
                                 # Remove all the comment's replies and delete the bot comment
                                 post._submission.comments.replace_more() # Resolves the "More comments" text to get all comments
                                 for comment in top_level_comment.replies.list():
@@ -513,8 +502,6 @@ class Janitor:
                         print(f"\tRemoving post: \n\t{post._submission.title}\n\t{post._submission.permalink}")
                         print(f"\tReason: {reason}\n---\n")   
                     
-                    post._post_was_serviced = True
-
             else:
                 print("\tTime has not expired - skipping post")
             self.action_counter += 1
@@ -529,10 +516,15 @@ class Janitor:
 ###############################################################################               
 
 def go():
+    
+    # Init Janitor
+    print("Setting subreddit: "+ cfg['DEFAULT']['subreddit'])
+    jannie = Janitor(cfg['DEFAULT']['subreddit'])
+
     # Settings load
     fs = SSBSettings()
-    jannie = Janitor(cfg['DEFAULT']['subreddit'])
     jannie.set_subreddit_settings(fs)
+    print("Settings loaded")
     while True:
         try:
             
@@ -546,6 +538,7 @@ def go():
                 jannie.handle_posts()
                  
                 # Wait
+                print("Waiting " + cfg['DEFAULT']['bot_interval'] +" seconds")
                 time.sleep(int(cfg['DEFAULT']['bot_interval']))
 
         except Exception as e:
@@ -553,7 +546,7 @@ def go():
             print(repr(e))
             traceback.print_exc()
             print("\n")
-            print("Restarting...\n")
+            print("Restarting in 10 seconds...\n")
             time.sleep(10) #Pause 10s to avoid a rapid/blocking loop
 
 
