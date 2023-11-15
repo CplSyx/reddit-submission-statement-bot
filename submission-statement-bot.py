@@ -102,8 +102,8 @@ class SubredditSettings:
     def __init__(self):
         # list of flair text, in lower case
         self.low_effort_flair = []
-        self.removal_reason = cfg['TEXT']['removal_reason']
-        self.submission_statement_request_text = str(cfg['TEXT']['submission_statement_request'])
+        self.removal_reason = str(cfg['TEXT']['removal_reason']).encode('raw_unicode_escape').decode('unicode_escape')
+        self.submission_statement_request_text = str(cfg['TEXT']['submission_statement_request']).encode('raw_unicode_escape').decode('unicode_escape')
         self.submission_statement_time_limit_minutes = int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement'])
         self.submission_statement_minimum_char_length = int(cfg['DEFAULT']['submission_statement_minimum_char_length'])
         self.report_insufficient_length = True
@@ -130,9 +130,13 @@ class SubredditSettings:
 class SSBSettings(SubredditSettings):
     def __init__(self):
         super().__init__() #Why? We can just use this class can't we?
-        self.removal_reason = str(cfg['TEXT']['removal_reason'])
+
+        self.subreddit = cfg['DEFAULT']['subreddit']
+        #.encode('raw_unicode_escape').decode('unicode_escape') is required as ConfigParser will escape items such as "\n" to "\\n" and remove the newline functionality.
+        # See here for why we've done it this way: https://stackoverflow.com/questions/1885181/how-to-un-escape-a-backslash-escaped-string/69772725#69772725
+        self.removal_reason = str(cfg['TEXT']['removal_reason']).encode('raw_unicode_escape').decode('unicode_escape')
         self.submission_statement_time_limit_minutes = int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement'])
-        self.submission_statement_request_text = str(cfg['TEXT']['submission_statement_request'])
+        self.submission_statement_request_text = str(cfg['TEXT']['submission_statement_request']).encode('raw_unicode_escape').decode('unicode_escape')
         self.submission_statement_minimum_char_length = int(cfg['DEFAULT']['submission_statement_minimum_char_length'])
         self.report_insufficient_length = True
         self.remove_posts = cfg['DEFAULT'].getboolean('remove_posts')
@@ -140,17 +144,7 @@ class SSBSettings(SubredditSettings):
         self.pin_submission_statement_response = cfg['DEFAULT'].getboolean('pin_submission_statement_response')
         self.submission_reply_spoiler = cfg['DEFAULT'].getboolean('use_spolier_tags')
         self.required_words = cfg['DEFAULT'].getlist('required_words_in_submission_statement')
-
-#    def submission_statement_quote_text(self, ss, spoilers):
-#        # Construct the quoted message, by quoting OP's submission statement
-#
-#        verbiage = f"The following submission statement was provided by u/{ss.author}:\n\n---\n\n"
-#        if(spoilers):
-#            verbiage = verbiage + ">!" + ss.body + "!<"
-#        else:
-#            verbiage = verbiage + ss.body
-#        verbiage = verbiage + f"\n\n---\n\n Does this explain the post? Please report this post for moderator attention if not."
-#        return verbiage
+        
 
 
 ###############################################################################
@@ -164,9 +158,11 @@ class Post:
     def __init__(self, submission, time_limit_minutes=30):
         self._submission = submission
         self._created_time = datetime.utcfromtimestamp(submission.created_utc)
-        self._submission_statement_validated = False
+        self._submission_statement_checked = False
+        self._submission_statement_valid = False
         self._submission_statement = None
         self._post_was_serviced = False
+        self.bot_text = "\n\n*" + str(cfg['TEXT']['bot_footer_text']).encode('raw_unicode_escape').decode('unicode_escape') + "*"
         self._time_limit = timedelta(hours=0, minutes=time_limit_minutes)
 
     def __eq__(self, other):
@@ -178,17 +174,13 @@ class Post:
     def __str__(self):
         return f"{self._submission.permalink} | {self._submission.title}"
 
-    def candidate_submission_statement(self): #TODO this function needs tidying up
+    def candidate_submission_statement(self): #TODO this function needs tidying up. Does it belong in this class?
         # identify a possible submission statement
-
-        # return early if these checks already ran, and ss is proper
-        if self._submission_statement_validated:
-            #print("\tsubmission statement validated")
-            return True
         
         # 0.) Is the post is distinguished? If so, it is assumed to be made in "official capacity" and can be ignored by SSbot
         if self._submission.distinguished:
-            self._submission_statement_validated = True 
+            self._submission_statement_checked = True 
+            self._submission_statement_valid = True # We're assuming this given it's a mod post.
             print("\tPost is distinguished - ignoring")
             return True
 
@@ -207,7 +199,7 @@ class Post:
         # submission.comments is a CommentForest (A forest of comments starts with multiple top-level comments.) meaning we can address top level comments and their replies
         ss_candidates = []
         for top_level_comment in self._submission.comments:
-            if top_level_comment.author.name == cfg['CREDENTIALS']['username'] and "Submission Statement Request" in top_level_comment.body:
+            if top_level_comment.author is not None and top_level_comment.author.name == cfg['CREDENTIALS']['username'] and "Submission Statement Request" in top_level_comment.body:
                 # found the bot comment, take the replies as SS candidates
 
                 self._submission.comments.replace_more() # Resolves the "More comments" text to get all comments
@@ -217,7 +209,8 @@ class Post:
 
         # no SS
         if len(ss_candidates) == 0:
-            self._submission_statement_validated = False
+            self._submission_statement_checked = False
+            self._submission_statement_valid = False
             self._submission_statement = None
             return False
 
@@ -251,25 +244,24 @@ class Post:
         print(f"\tModerator approved? {self._submission.approved}")
         return self._submission.approved
 
-    def is_post_removed(self):
-        return self._submission.removed
-
     def refresh(self, reddit):
         self._submission = praw.models.Submission(reddit, id = self._submission.id)    
 
-    def submission_statement_validated(self, janitor_name):
-        #self._submission_statement_validated = False
+    def submission_statement_previously_validated(self, janitor_name):
+        if self._submission_statement_valid == True:
+            return True
+        
+        self._submission_statement_valid = False
         for comment in self._submission.comments:
             if comment and comment.author and comment.author.name and comment.body:
                 if comment.author.name == janitor_name and "submission statement was provided" in comment.body:
-                    self._submission_statement_validated = True 
+                    self._submission_statement_valid = True 
+                    self._submission_statement_checked = True
                     break
-        return self._submission_statement_validated
+        return self._submission_statement_valid
 
     def serviced_by_janitor(self, janitor_name):
-        # if we are using janitor comments to ask for responses, we can't just rely on a top-level janitor comment to say it's been serviced. We need to look for specific details *in* that comment.
-        # But we CAN still use this thread to determine if no action has been taken.
-
+        # Serviced means the janitor has taken some kind of action - that has resulted in leaving a comment behind.
         
         if self._post_was_serviced:
             return True
@@ -277,7 +269,6 @@ class Post:
         self._post_was_serviced = False
         for reply in self._submission.comments:
             if reply and reply.author and reply.author.name:
-                #print(f"\t\treply from: {reply.author.name}")
                 if reply.author.name == janitor_name:
                     self._post_was_serviced = True 
                     break
@@ -291,7 +282,7 @@ class Post:
         self._submission_statement.report(reason)
 
     def reply_to_post(self, text, pin=True, lock=False):
-        posted_comment = self._submission.reply(text)
+        posted_comment = self._submission.reply(text + self.bot_text)
         posted_comment.mod.distinguish(sticky=pin)
         if lock:
             posted_comment.mod.lock()
@@ -299,7 +290,7 @@ class Post:
 
     def remove_post(self, reason, note):
         self._submission.mod.remove(spam=False, mod_note=note)
-        removal_comment = self._submission.reply(reason)
+        removal_comment = self._submission.reply(reason + self.bot_text)
         removal_comment.mod.distinguish(sticky=True)
 
 
@@ -336,7 +327,7 @@ class Janitor:
         # Construct the quoted message, by quoting OP's submission statement
 
         verbiage = f"The following submission statement was provided by u/{ss.author}:\n\n---\n\n"
-        # WARNING: the text phrase "submission statement was provided" is used as a verification of a bot reply later in the code. Do not change the above line in isolation.
+        #TODO Check and remove this comment WARNING: the text phrase "submission statement was provided" is used as a verification of a bot reply later in the code. Do not change the above line in isolation.
          
         if(spoilers):
             verbiage = verbiage + ">!" + ss.body + "!<"
@@ -354,66 +345,61 @@ class Janitor:
         for post in self.submissions:
             post.refresh(self.reddit)
 
-        for post in self.unmoderated:
-            post.refresh(self.reddit)
 
-
-    def fetch_submissions(self):
+    def fetch_submissions(self, type="new"):
         self.run_start_time = datetime.utcnow()
         print("Fetching new submissions. Time now is: " + datetime.utcnow().strftime("%Y-%m-%d, %H:%M:%S") + " UTC")
         submissions = set()
-        #newposts = self.subreddit.top(time_filter="day")
-        newposts = self.subreddit.new()
+        if (type == "new") :
+            newposts = self.subreddit.new()
             # Was originally going to use subreddit.top but this doesn't return posts immediately when they're submitted for some reason - it takes time for Reddit to register them in the "top" list I suspect. So instead we use subreddit.new even though this will give a larger list of results to process.
-            # Possibility we could limit the number of posts retrieved, but how would we know where to put that limit? Default is 1000 posts.
-        for post in newposts:
-            
-            # we don't care about posts that have already been removed as the bot will not be able to override that
-            # we do still want posts that moderators have approved, as the approval may be due to other reports
-            # We also don't want posts created before the bot was started up - we're not interested in going back in time.
-            if not (post.removed) and datetime.utcfromtimestamp(post.created_utc) > self.startup_time:            
-                submissions.add(Post(post))
+            # Possibility we could limit the number of posts retrieved, but how would we know where to put that limit? Default is 1000 posts. As such adding this as the default choice if nothing is specified.
+        else :
+            newposts = self.subreddit.top(time_filter="day")
 
-        #self.submissions = submissions
+        # Add each post into our wrapper class
+        for post in newposts:
+            submissions.add(Post(post))
+
         return submissions
-    
+
 
     def update_submission_list(self):
         retrieved_submissions = self.fetch_submissions()
         self.submissions = self.submissions.union(retrieved_submissions) # We're adding to this list to ensure that we don't lose anything if there's a big influx of posts. Union prevents duplicates.
-        #TODO - Prune submissions here to remove anything we've already validated, or that we've already removed. Is it as simple as the following? CHECK!
+
+        # Refresh all the posts we have in the list to ensure their status is correct (primarily we're concerned about "removed")
+        self.refresh_posts()
 
         # Iterate through the submissions list, mark anything we need to remove and then remove it.
         submissions_to_remove = set()
         for post in self.submissions:
-            if post._submission_statement_validated or post._submission.removed:
+            if post._submission.removed or post._submission_statement_checked: #TODO Some issue exists with the way we're handling "checked" posts. They are appearing in the list again after already being checked/approved and are not reaching this point to remove them from checking again. Why?
                 submissions_to_remove.add(post)
 
         # Can't "live" remove items from self.submissions otherwise we'll hit a "Set changed size during iteration" error, so remove afterwards
         self.submissions = self.submissions.difference(submissions_to_remove)
 
+
     def handle_posts(self):
         print("Handling posts")
-        self.refresh_posts()
-        #self.prune_submissions()
-
-        all_posts = self.submissions #.union(self.unmoderated)
-        print("  "+str(len(all_posts)) + " submissions to check")
-        for post in all_posts:
+        
+        print("  "+str(len(self.submissions)) + " submissions to check")
+        for post in self.submissions:
             print(f"  Checking post: {post._submission.title}\n\t{post._submission.permalink}...")
 
-            if post.submission_statement_validated(self.username): 
-                #TODO _submission_statement_validated is causing some issues where we're checking but not correctly responding. Need to separate out "validated" as an action vs "valid" as a statement
-                # Already dealt with this one, skip
+            if post.submission_statement_previously_validated(self.username): 
+                # We will reach this point if the bot is restarted and we are checking historical posts, so skip.
                 print("\tSubmission statement already validated")
                 continue
 
             if not post.serviced_by_janitor(self.username):
                 print("\tNew post - requesting submission statement from user")
                 # Here we have to request the submission statement from the author, and move on
-                text = "Submission Statement Request\n\n" + self.sub_settings.submission_statement_request_text
+                text = "###Submission Statement Request\n\n" + self.sub_settings.submission_statement_request_text
                 post.reply_to_post(text, pin=self.sub_settings.pin_submission_statement_request, lock=False)
                 post._post_was_serviced = True
+                self.action_counter += 1
                 continue
 
             else:
@@ -428,7 +414,7 @@ class Janitor:
 
                 # Remove original comment by the bot
                 for top_level_comment in post._submission.comments:
-                        if top_level_comment.author.name == cfg['CREDENTIALS']['username'] and "Submission Statement Request" in top_level_comment.body: 
+                        if top_level_comment.author is not None and top_level_comment.author.name == cfg['CREDENTIALS']['username'] and "Submission Statement Request" in top_level_comment.body: 
                             #Do not use "is" as that compares in-memory objects to be the same object, use == for value comparison
 
                             # found the bot's request for a SS
@@ -461,8 +447,8 @@ class Janitor:
 
                         # We need to post the submission statement response. 
                         
-                        post.reply_to_post(self.submission_statement_quote_text(post._submission_statement, self.sub_settings.submission_reply_spoiler), pin=self.sub_settings.pin_submission_statement_response, lock=True)
-                        post._submission_statement_validated = True
+                        post.reply_to_post(self.submission_statement_quote_text(post._submission_statement, self.sub_settings.submission_reply_spoiler), pin=self.sub_settings.pin_submission_statement_response, lock=True)                        
+                        self._submission_statement_valid = True
                         print("\tSubmission statement validated")
 
                 else:
@@ -471,7 +457,7 @@ class Janitor:
 
                     # Remove original comment by the bot
                     for top_level_comment in post._submission.comments:
-                            if top_level_comment.author.name == cfg['CREDENTIALS']['username'] and "Submission Statement Request" in top_level_comment.body: 
+                            if top_level_comment.author is not None and top_level_comment.author.name == cfg['CREDENTIALS']['username'] and "Submission Statement Request" in top_level_comment.body: 
                                 #Do not use "is" as that compares in-memory objects to be the same object, use == to compare values
 
                                 # Found the bot's request for a SS
@@ -483,7 +469,7 @@ class Janitor:
                                 top_level_comment.delete()
 
                                
-                    # did a mod approve, or is it more than 1 day old? #DO WE CARE? #TODO tidy this up for cases we want to manage
+                    # did a mod approve, or is it more than 1 day old? #DO WE CARE? #TODO tidy this up for cases we want to manage. Length, keywords, time
                     #   yes -> report 
                     #   no -> remove and pin removal reason
                     if post._created_time + timedelta(hours=24, minutes=0) < now:
@@ -502,9 +488,13 @@ class Janitor:
                         print(f"\tRemoving post: \n\t{post._submission.title}\n\t{post._submission.permalink}")
                         print(f"\tReason: {reason}\n---\n")   
                     
+                    self._submission_statement_valid = False
+                    self.action_counter += 1
+
+                self._submission_statement_checked = True   
             else:
                 print("\tTime has not expired - skipping post")
-            self.action_counter += 1
+            
 
         print("  Done in " + str(datetime.utcnow() - self.run_start_time) + ".")
         print(str(self.action_counter) + " actions taken. Bot runtime " + str(datetime.utcnow() - self.startup_time) + ".")

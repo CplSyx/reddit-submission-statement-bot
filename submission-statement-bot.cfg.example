@@ -10,8 +10,9 @@ bot_interval = 60
 required_words_in_submission_statement = irtr, mmm
 
 [TEXT]
-removal_reason = We require that posters submit an explanation (a.k.a. a submission statement) for why their post fits the requirements for r/${DEFAULT:subreddit}. Your post has been removed as it is missing this requirement. \n\nIf you wish to share your post with the community, you will need to resubmit your link along with a submission statement of at least ${DEFAULT:submission_statement_minimum_char_length} characters.
-submission_statement_request = We require that posters submit an explanation (a.k.a. a submission statement) for why their post fits the requirements for r/${DEFAULT:subreddit}. \n\nPlease reply to this comment within the next ${DEFAULT:minutes_to_wait_for_submission_statement} minutes with a suitable submission statement that is at least ${DEFAULT:submission_statement_minimum_char_length} characters in length.
+removal_reason = We require that posters submit an explanation (a.k.a. a submission statement) for why their post fits the requirements for r/${DEFAULT:subreddit}. Your post has been removed as it is missing this requirement.\n\nIf you wish to share your post with the community, you will need to resubmit your link along with a submission statement of at least ${DEFAULT:submission_statement_minimum_char_length} characters.
+submission_statement_request = We require that posters submit an explanation (a.k.a. a submission statement) for why their post fits the requirements for r/${DEFAULT:subreddit}. \n\nPlease **reply to this comment** within the next ${DEFAULT:minutes_to_wait_for_submission_statement} minutes with a suitable submission statement that is at least ${DEFAULT:submission_statement_minimum_char_length} characters in length.
+bot_footer_text = I am a bot, and this action was performed automatically. Please [contact the moderators of this subreddit](https://www.reddit.com/message/compose/?to=/r/${DEFAULT:subreddit}) if you have any questions or concerns.
 
 [CREDENTIALS]
 username =  submission-bot
