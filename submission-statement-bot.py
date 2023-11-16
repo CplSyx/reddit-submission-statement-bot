@@ -110,7 +110,8 @@ class SubredditSettings:
         self.remove_posts = cfg['DEFAULT'].getboolean('remove_posts')
         self.pin_submission_statement_request = cfg['DEFAULT'].getboolean('pin_submission_statement_request')
         self.pin_submission_statement_response = cfg['DEFAULT'].getboolean('pin_submission_statement_response')
-        self.remove_request_comment = cfg['DEFAULT'].getboolean('bot_cleanup') #TODO implement this
+        self.required_words = cfg['DEFAULT'].getlist('required_words_in_submission_statement')
+        self.remove_request_comment = cfg['DEFAULT'].getboolean('bot_remove_request')
 
     def removal_text(self):
         return self.removal_reason
@@ -144,6 +145,7 @@ class SSBSettings(SubredditSettings):
         self.pin_submission_statement_response = cfg['DEFAULT'].getboolean('pin_submission_statement_response')
         self.submission_reply_spoiler = cfg['DEFAULT'].getboolean('use_spolier_tags')
         self.required_words = cfg['DEFAULT'].getlist('required_words_in_submission_statement')
+        self.remove_request_comment = cfg['DEFAULT'].getboolean('bot_remove_request')
         
 
 
@@ -177,24 +179,14 @@ class Post:
     def candidate_submission_statement(self): #TODO this function needs tidying up. Does it belong in this class?
         # identify a possible submission statement
         
-        # 0.) Is the post is distinguished? If so, it is assumed to be made in "official capacity" and can be ignored by SSbot
+        # Is the post is distinguished? If so, it is assumed to be made in "official capacity" and can be ignored by SSbot
         if self._submission.distinguished:
             self._submission_statement_checked = True 
             self._submission_statement_valid = True # We're assuming this given it's a mod post.
             print("\tPost is distinguished - ignoring")
             return True
-
-        # 1.) exempt text posts from this rule 
-        # REMOVED. Why should text posts be excluded?
-        #if self._submission.is_self:
-        #    self._is_text_post = True 
-        #    self._submission_statement_validated = True
-        #    self._submission_statement = None
-        #    # technically False, but True indicates everything is good, do not remove post
-        #    #print("\tsubmission statement is self post; validated")
-        #    return True
-
-        # 2.) identify candidate submission statements. 
+        
+        # Identify candidate submission statements. 
         # We need to find the SS bot's comment, and then look at the replies to it
         # submission.comments is a CommentForest (A forest of comments starts with multiple top-level comments.) meaning we can address top level comments and their replies
         ss_candidates = []
@@ -290,7 +282,8 @@ class Post:
 
     def remove_post(self, reason, note):
         self._submission.mod.remove(spam=False, mod_note=note)
-        removal_comment = self._submission.reply(reason + self.bot_text)
+        formatted_note = "\n\n(Removal reason: "+ note +")"
+        removal_comment = self._submission.reply(reason + formatted_note + self.bot_text)
         removal_comment.mod.distinguish(sticky=True)
 
 
@@ -327,13 +320,13 @@ class Janitor:
         # Construct the quoted message, by quoting OP's submission statement
 
         verbiage = f"The following submission statement was provided by u/{ss.author}:\n\n---\n\n"
-        #TODO Check and remove this comment WARNING: the text phrase "submission statement was provided" is used as a verification of a bot reply later in the code. Do not change the above line in isolation.
+        #WARNING: the text phrase "submission statement was provided" is used as a verification of a bot reply later in the code (in the "submission_statement_previously_validated" function). Do not change the above line in isolation.
          
         if(spoilers):
             verbiage = verbiage + ">!" + ss.body + "!<"
         else:
             verbiage = verbiage + ss.body
-        verbiage = verbiage + f"\n\n---\n\n Does this explain the post? Please report for moderator attention if not. \n\n"
+        verbiage = verbiage + f"\n\n---\n\n Does this explain the post? If not, please report and a moderator will review. \n\n"
         return verbiage
 
 
@@ -389,7 +382,7 @@ class Janitor:
             print(f"  Checking post: {post._submission.title}\n\t{post._submission.permalink}...")
 
             if post.submission_statement_previously_validated(self.username): 
-                # We will reach this point if the bot is restarted and we are checking historical posts, so skip.
+                # We will reach this point if the bot is restarted and we are checking historical posts, so skip them.
                 print("\tSubmission statement already validated")
                 continue
 
@@ -453,40 +446,31 @@ class Janitor:
 
                 else:
                     print("\tPost does NOT have submission statement")
-                    now = datetime.utcnow()
 
-                    # Remove original comment by the bot
-                    for top_level_comment in post._submission.comments:
-                            if top_level_comment.author is not None and top_level_comment.author.name == cfg['CREDENTIALS']['username'] and "Submission Statement Request" in top_level_comment.body: 
-                                #Do not use "is" as that compares in-memory objects to be the same object, use == to compare values
+                    if self.sub_settings.remove_request_comment:
+                        # Remove original comment by the bot
+                        for top_level_comment in post._submission.comments:
+                                if top_level_comment.author is not None and top_level_comment.author.name == cfg['CREDENTIALS']['username'] and "Submission Statement Request" in top_level_comment.body: 
+                                    #Do not use "is" as that compares in-memory objects to be the same object, use == to compare values
 
-                                # Found the bot's request for a SS
-                                # Remove all the comment's replies and delete the bot comment
-                                post._submission.comments.replace_more() # Resolves the "More comments" text to get all comments
-                                for comment in top_level_comment.replies.list():
-                                    # list(): Return a flattened list of all comments. (awesome - no recursion needed!)
-                                    comment.mod.remove()
-                                top_level_comment.delete()
+                                    # Found the bot's request for a SS
+                                    # Remove all the comment's replies and delete the bot comment
+                                    post._submission.comments.replace_more() # Resolves the "More comments" text to get all comments
+                                    for comment in top_level_comment.replies.list():
+                                        # list(): Return a flattened list of all comments. (awesome - no recursion needed!)
+                                        comment.mod.remove()
+                                    top_level_comment.delete()
 
-                               
-                    # did a mod approve, or is it more than 1 day old? #DO WE CARE? #TODO tidy this up for cases we want to manage. Length, keywords, time
-                    #   yes -> report 
-                    #   no -> remove and pin removal reason
-                    if post._created_time + timedelta(hours=24, minutes=0) < now:
-                        reason = "Post is more than 1 day old and has no submission statement. Please take a look."
-                        post.report_post(reason)
-                        print(f"\tReporting post: \n\t{post._submission.title}\n\t{post._submission.permalink}")
-                        print(f"\tReason: {reason}\n---\n")
-                    elif post.is_moderator_approved():
-                        reason = "Moderator approved post, but there is no SS. Please double check."
-                        post.report_post(reason)
-                        print(f"\tReporting post: \n\t{post._submission.title}\n\t{post._submission.permalink}")
-                        print(f"\tReason: {reason}\n---\n")
-                    else:
-                        reason = "No submission statement"
-                        post.remove_post(self.sub_settings.removal_reason, reason)
+                    # Report / Remove                
+                    removal_note = "No submission statement provided"                               
+                    if self.sub_settings.remove_posts:
+                        post.remove_post(self.sub_settings.removal_reason, removal_note)
                         print(f"\tRemoving post: \n\t{post._submission.title}\n\t{post._submission.permalink}")
-                        print(f"\tReason: {reason}\n---\n")   
+                        print(f"\tReason: {removal_note}\n---\n")   
+                    else:
+                        post.report_post(removal_note)
+                        print(f"\tReporting post: \n\t{post._submission.title}\n\t{post._submission.permalink}")
+                        print(f"\tReason: {removal_note}\n---\n")
                     
                     self._submission_statement_valid = False
                     self.action_counter += 1

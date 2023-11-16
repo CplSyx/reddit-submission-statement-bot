@@ -7,6 +7,7 @@ pin_submission_statement_response = False
 remove_posts = True
 use_spolier_tags = True
 bot_interval = 60
+bot_remove_request = True
 required_words_in_submission_statement = irtr, mmm
 
 [TEXT]
