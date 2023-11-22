@@ -11,7 +11,7 @@
 #3) If the user doesn't comply, SB deletes the post and notifies the user via a removal reason and a new sticky comment
 #4) If the user does comply, SB deletes the sticky and posts a new sticky comment saying like "user has provided following reason: [...], please report post if this doesn't fit the sub"
 
-# Edge cases 
+# Edge cases TODO
 # 1) Ignore moderator actions?
 #      DONE (I think, this is normal behaviour so we just haven't included a specific scenario for "approved" posts) If a moderator has approved a post, we still require a SS
 #      DONE If a moderator has removed a post - ignore it.
@@ -37,8 +37,7 @@
         # check the length, if too short remove/report
         # otherwise assume it's good and we will need to post the SS as a comment
 #### VALIDATE COMPLETE FLOW NOW AND REWRITE ABOVE
-# Todo: Tidy up settings classes - why do we have two
-# Remove any unused code 
+# TODO: Remove any unused code 
 
 
 #The current logic as per the code below 2023-11-02
@@ -113,15 +112,6 @@ class SubredditSettings:
         self.required_words = cfg['DEFAULT'].getlist('required_words_in_submission_statement')
         self.remove_request_comment = cfg['DEFAULT'].getboolean('bot_remove_request')
 
-    def removal_text(self):
-        return self.removal_reason
-
-#    def submission_statement_quote_text(self, submission_statement):
-#        # construct a message to pin, by quoting OP's submission statement
-#        # submission_statement is a top level comment
-#        return ""
-
-
 ###############################################################################
 ###
 ### Load Settings
@@ -130,7 +120,7 @@ class SubredditSettings:
 
 class SSBSettings(SubredditSettings):
     def __init__(self):
-        super().__init__() #Why? We can just use this class can't we?
+        super().__init__() #TODO Why? We can just use this class can't we?
 
         self.subreddit = cfg['DEFAULT']['subreddit']
         #.encode('raw_unicode_escape').decode('unicode_escape') is required as ConfigParser will escape items such as "\n" to "\\n" and remove the newline functionality.
@@ -176,7 +166,7 @@ class Post:
     def __str__(self):
         return f"{self._submission.permalink} | {self._submission.title}"
 
-    def candidate_submission_statement(self): #TODO this function needs tidying up. Does it belong in this class?
+    def candidate_submission_statement(self):
         # identify a possible submission statement
         
         # Is the post is distinguished? If so, it is assumed to be made in "official capacity" and can be ignored by SSbot
@@ -212,10 +202,13 @@ class Post:
             return True
         else:
             for candidate in ss_candidates:
+                
+                # Create a list of words in the comment
                 text = candidate.body
                 text = text.lower().strip().split()
 
-                # post author may have said "submission statement" in their comment, makes life easy
+                # Check the comment for the words "submission" and "statement"
+                # (the author may have said "submission statement" in their comment, makes life easy)
                 if "submission" in text and "statement" in text:
                     self._submission_statement = candidate
                     break
