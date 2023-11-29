@@ -11,7 +11,7 @@
 #3) If the user doesn't comply, SB deletes the post and notifies the user via a removal reason and a new sticky comment
 #4) If the user does comply, SB deletes the sticky and posts a new sticky comment saying like "user has provided following reason: [...], please report post if this doesn't fit the sub"
 
-# Edge cases TODO
+# Edge cases 
 # 1) Ignore moderator actions?
 #      DONE (I think, this is normal behaviour so we just haven't included a specific scenario for "approved" posts) If a moderator has approved a post, we still require a SS
 #      DONE If a moderator has removed a post - ignore it.
@@ -40,7 +40,7 @@
 # TODO: Remove any unused code 
 
 # Bug squashing TODO
-# 1) Bot seems to recheck old posts from before it was started. We don't want that. #Bug1
+# 1) DONE Bot seems to recheck old posts from before it was started. We don't want that. #Bug1
 # 2) Some issue exists with the way we're handling "checked" posts. They are appearing in the list again after already being checked/approved and are not reaching this point to remove them from checking again. Why? #Bug2
 
 
@@ -90,7 +90,7 @@
 # - want a debug mode, so that collapsebot doesn't confuse people
 
 from configparser import ConfigParser, ExtendedInterpolation
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import praw
 import time
 import traceback
@@ -125,9 +125,9 @@ class SubredditSettings:
 ###
 ###############################################################################
 
-class SSBSettings(SubredditSettings):
+class SSBSettings():#(SubredditSettings):
     def __init__(self):
-        super().__init__() #TODO Why? We can just use this class can't we?
+        #super().__init__() #TODO Why? We can just use this class can't we? CONFIRM IF WORKING AS SubredditSettings CURRENTLY COMMENTED OUT
 
         self.subreddit = cfg['DEFAULT']['subreddit']
         #.encode('raw_unicode_escape').decode('unicode_escape') is required as ConfigParser will escape items such as "\n" to "\\n" and remove the newline functionality.
@@ -159,7 +159,7 @@ class SSBSettings(SubredditSettings):
 class Post:
     def __init__(self, submission, time_limit_minutes=30):
         self._submission = submission
-        self._created_time = datetime.utcfromtimestamp(submission.created_utc)
+        self._created_time = datetime.fromtimestamp(submission.created_utc, tz=timezone.utc)#datetime.utcfromtimestamp(submission.created_utc)
         self._submission_statement_checked = False
         self._submission_statement_valid = False
         self._submission_statement = None
@@ -233,7 +233,7 @@ class Post:
 
     def has_time_expired(self, time_limit):
         # True or False -- has the time expired to add a submission statement?
-        return (self._created_time + timedelta(minutes=time_limit) < datetime.utcnow())
+        return ((self._created_time + timedelta(minutes=time_limit)) < datetime.now(timezone.utc))#datetime.utcnow())
 
     def is_moderator_approved(self):
         print(f"\tModerator approved? {self._submission.approved}")
@@ -311,9 +311,9 @@ class Janitor:
         self.mod = self.subreddit.mod
         self.submissions = set()
         self.unmoderated = set()
-        self.sub_settings = SubredditSettings()
-        self.startup_time = datetime.utcnow()
-        self.run_start_time = datetime.utcnow()
+        self.sub_settings = SSBSettings()#SubredditSettings()
+        self.startup_time = datetime.now(timezone.utc)#datetime.utcnow()
+        self.run_start_time = datetime.now(timezone.utc)#datetime.utcnow()
         self.action_counter = 0
 
     def set_subreddit_settings(self, sub_settings):
@@ -326,7 +326,8 @@ class Janitor:
         #WARNING: the text phrase "submission statement was provided" is used as a verification of a bot reply later in the code (in the "submission_statement_previously_validated" function). Do not change the above line in isolation.
          
         if(spoilers):
-            verbiage = verbiage + ">!" + ss.body + "!<"
+            quote_text = ss.body.replace("\n\n", "!<\n\n>!") # Need to be able to handle line breaks in the Reddit format, as spoiler tags don't carry over.
+            verbiage = verbiage + ">!" + quote_text + "!<"
         else:
             verbiage = verbiage + ss.body
         verbiage = verbiage + f"\n\n---\n\n Does this explain the post? If not, please report and a moderator will review. \n\n"
@@ -343,8 +344,8 @@ class Janitor:
 
 
     def fetch_submissions(self, type="new"):
-        self.run_start_time = datetime.utcnow()
-        print("Fetching new submissions. Time now is: " + datetime.utcnow().strftime("%Y-%m-%d, %H:%M:%S") + " UTC") #Bug1
+        self.run_start_time = datetime.now(timezone.utc)#datetime.utcnow()
+        print("Fetching new submissions. Time now is: " + datetime.now(timezone.utc).strftime("%Y-%m-%d, %H:%M:%S") + " UTC") #Bug1 #datetime.utcnow().strftime("%Y-%m-%d, %H:%M:%S") + " UTC") #Bug1
         submissions = set()
         if (type == "new") :
             newposts = self.subreddit.new()
@@ -354,8 +355,10 @@ class Janitor:
             newposts = self.subreddit.top(time_filter="day")
 
         # Add each post into our wrapper class
+        startup_timestamp = time.mktime(self.startup_time.timetuple())
         for post in newposts:
-            submissions.add(Post(post))
+            if post.created_utc > startup_timestamp: # Ignore posts created before the bot was started
+                submissions.add(Post(post))
 
         return submissions
 
@@ -402,7 +405,7 @@ class Janitor:
             print(f"  Checking post: {post._submission.title}\n\t{post._submission.permalink}...")
 
             if post.submission_statement_previously_validated(self.username): 
-                # We will reach this point if the bot is restarted and we are checking historical posts, so skip them.
+                # Skip posts that we've already validated
                 print("\tSubmission statement already validated")
                 continue
 
@@ -498,8 +501,10 @@ class Janitor:
                 print("\tTime has not expired - skipping post")
             
 
-        print("  Done in " + str(datetime.utcnow() - self.run_start_time) + ".")
-        print(str(self.action_counter) + " actions taken. Bot runtime " + str(datetime.utcnow() - self.startup_time) + ".")
+        print("  Done in " + str(datetime.now(timezone.utc) - self.run_start_time) + ".")
+        print(str(self.action_counter) + " actions taken. Bot runtime " + str(datetime.now(timezone.utc) - self.startup_time) + ".")
+        #print("  Done in " + str(datetime.utcnow() - self.run_start_time) + ".")
+        #print(str(self.action_counter) + " actions taken. Bot runtime " + str(datetime.utcnow() - self.startup_time) + ".")
 
 ###############################################################################
 ###
@@ -530,11 +535,11 @@ def go():
                 jannie.handle_posts()
                  
                 # Wait (min 30 seconds)
-                if cfg['DEFAULT']['bot_interval'] > 30:
+                if int(cfg['DEFAULT']['bot_interval']) > 30:
                     wait_time = int(cfg['DEFAULT']['bot_interval'])
                 else:
                     wait_time = 30
-                print("Waiting " + wait_time +" seconds")
+                print("Waiting " + str(wait_time) +" seconds")
                 time.sleep(wait_time) 
 
         except Exception as e:
