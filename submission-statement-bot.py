@@ -377,7 +377,7 @@ class Janitor:
                 submissions_to_remove.add(post)
 
         # Can't "live" remove items from self.submissions otherwise we'll hit a "Set changed size during iteration" error, so remove afterwards
-        self.submissions = self.submissions.difference(submissions_to_remove)
+        self.submissions = self.submissions - submissions_to_remove
 
     def remove_or_report_post(self, post, removal_reason):
         if self.sub_settings.remove_posts:
@@ -458,11 +458,11 @@ class Janitor:
                         self.remove_or_report_post(post, removal_note)
                                             
                     else:                        
-                        print(f"\tSS has proper length \n\t{post._submission.permalink}")
+                        print("\tSS has proper length")
 
                         # We need to post the submission statement response.                         
                         post.reply_to_post(self.submission_statement_quote_text(post._submission_statement, self.sub_settings.submission_reply_spoiler), pin=self.sub_settings.pin_submission_statement_response, lock=True)                        
-                        self._submission_statement_valid = True
+                        post._submission_statement_valid = True
                         print("\tSubmission statement validated")
 
                 else:
@@ -493,10 +493,10 @@ class Janitor:
                         print(f"\tReporting post: \n\t{post._submission.title}\n\t{post._submission.permalink}")
                         print(f"\tReason: {removal_note}\n---\n")
                     
-                    self._submission_statement_valid = False
+                    post._submission_statement_valid = False
                     self.action_counter += 1
 
-                self._submission_statement_checked = True   
+                post._submission_statement_checked = True   
             else:
                 print("\tTime has not expired - skipping post")
             
@@ -535,8 +535,9 @@ def go():
                 jannie.handle_posts()
                  
                 # Wait (min 30 seconds)
-                if int(cfg['DEFAULT']['bot_interval']) > 30:
-                    wait_time = int(cfg['DEFAULT']['bot_interval'])
+                wait_time_from_config = int(cfg['DEFAULT']['bot_interval'])
+                if wait_time_from_config > 30:
+                    wait_time = wait_time_from_config
                 else:
                     wait_time = 30
                 print("Waiting " + str(wait_time) +" seconds")
