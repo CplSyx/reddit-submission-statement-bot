@@ -1,15 +1,11 @@
 #!/usr/bin/python3
 
-# Notes
-# Why are we excluding text posts, need to include that again for future use.
-# Time limit seems to be set in multiple locations - need to walk through the logic to determine where it's getting taken from
-# Some of this code feels redundant, can we simplify?
-
-#Basic approach
-#1) User posts
-#2) Submission Bot (SB) posts a sticky telling the user they have x minutes to provide a submission statement of at least x length 
-#3) If the user doesn't comply, SB deletes the post and notifies the user via a removal reason and a new sticky comment
-#4) If the user does comply, SB deletes the sticky and posts a new sticky comment saying like "user has provided following reason: [...], please report post if this doesn't fit the sub"
+# Basic approach
+# 1) User posts
+# 2) Submission Bot (SB) posts a sticky telling the user they have x minutes to provide a submission statement of at least x length 
+# 3) If the user doesn't comply, SB deletes the post and notifies the user via a removal reason and a new sticky comment
+# 4) If the user does comply, SB deletes the sticky and posts a new sticky comment saying like "user has provided following reason: [...], please report post if this doesn't fit the sub"
+# See flow diagrams on Github repo for more
 
 # Edge cases 
 # 1) Ignore moderator actions?
@@ -37,57 +33,15 @@
         # check the length, if too short remove/report
         # otherwise assume it's good and we will need to post the SS as a comment
 #### VALIDATE COMPLETE FLOW NOW AND REWRITE ABOVE
-# TODO: Remove any unused code 
+# TODO: 
+# DONE Why are we excluding text posts, need to include that again for future use.
+# DONE Time limit seems to be set in multiple locations - need to walk through the logic to determine where it's getting taken from
+# DONE Some of this code feels redundant, can we simplify? Remove any unused code 
+# Document code below, config file variables, and github readme
 
-# Bug squashing TODO
+# Bug squashing
 # 1) DONE Bot seems to recheck old posts from before it was started. We don't want that. #Bug1 [Added in a post created timestamp check vs bot startup time]
-# 2) DONE Some issue exists with the way we're handling "checked" posts. They are appearing in the list again after already being checked/approved and are not reaching this point to remove them from checking again. Why? #Bug2 [Code was referencing "self" when setting checked/valid; in that context it was the adding those to the janitor and not to the post object]
-
-
-#The current logic as per the code below 2023-11-02
-    # janitor fetch_submissions gets submissions in last 30 minutes into self.submissions
-    # janitor fetch_unmoderated gets whatever is in the modqueue
-    # janitor removes fetch_unmoderated from fetch_submissions so that we have a shorter and "active" list
-    # janitor handle_posts refreshes posts to check if moderated
-        # add posts to anything unmoderated for a full list
-        # for each post
-            # check if serviced by the janitor -> skip if so
-            # if time expired, check for submission statement (ss). Ignore text posts (why?)
-                # if one comment from OP, validate ss text, otherwise take longest comment from OP
-                # if ss valid, pin comment, if too short remove/report
-                # if not report/remove
-                # report if over a day old, report if mod approved without ss, remove if no ss
-                # mark as serviced
-                
-        # sleep 5 minutes
-    # janitor prune_unmoderated removes posts that are mod approved/removed from the list of unmoderated posts
-    # every hour janitor prune_submissions removes stale posts older than 24 hours, reports older than 12 hours, and runs prune_unmoderated
-    
-    
-            
-
-# Goals:
-# - check if post has submission statement
-#   - configure whether you remove or report if there is no ss
-#   - configure whether you remove or report if ss is not of sufficient length
-# - corner cases:
-#   - moderator already commented
-#   - moderator already approved
-#   - 
-# Goals:
-# - only allow certain flairs on certain days of the week
-# - (e.g. casual friday)
-#
-#
-# Constraints:
-# - only check last 24 hours
-#   - avoid going back in time too far
-#   - remember which posts were approved
-#   - probably want to pickle these, keep a sliding window
-# - avoid rechecking the same posts repeatedly
-# - recover if Reddit is down
-# - want bot to be easily configurable
-# - want a debug mode, so that collapsebot doesn't confuse people
+# 2) DONE Some issue exists with the way we're handling "checked" posts. They are appearing in the list again after already being checked/approved and are not reaching this point to remove them from checking again. Why? #Bug2 [Code was referencing "self" when setting checked/valid; in that context it was the adding those to the janitor and not to the post object]        
 
 from configparser import ConfigParser, ExtendedInterpolation
 from datetime import datetime, timedelta, timezone
@@ -107,7 +61,7 @@ class SSBSettings():
         #.encode('raw_unicode_escape').decode('unicode_escape') is required as ConfigParser will escape items such as "\n" to "\\n" and remove the newline functionality.
         # See here for why we've done it this way: https://stackoverflow.com/questions/1885181/how-to-un-escape-a-backslash-escaped-string/69772725#69772725
         self.removal_reason = str(cfg['TEXT']['removal_reason']).encode('raw_unicode_escape').decode('unicode_escape')
-        if int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement']) >= 1:
+        if int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement']) >= 1: # Enforce 1 minute minimum
             self.submission_statement_time_limit_minutes = int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement']) 
         else:
             self.submission_statement_time_limit_minutes = 1   
@@ -120,8 +74,7 @@ class SSBSettings():
         self.submission_reply_spoiler = cfg['DEFAULT'].getboolean('use_spolier_tags')
         self.required_words = cfg['DEFAULT'].getlist('required_words_in_submission_statement')
         self.remove_request_comment = cfg['DEFAULT'].getboolean('bot_remove_request')
-        
-
+    
 
 ###############################################################################
 ###
@@ -140,15 +93,6 @@ class Post:
         self._post_was_serviced = False
         self.bot_text = "\n\n*" + str(cfg['TEXT']['bot_footer_text']).encode('raw_unicode_escape').decode('unicode_escape') + "*"
         self._time_limit = timedelta(hours=0, minutes=time_limit_minutes)
-
-    def __eq__(self, other):
-        return self._submission.permalink == other._submission.permalink
-
-    def __hash__(self):
-        return hash(self._submission.permalink)
-
-    def __str__(self):
-        return f"{self._submission.permalink} | {self._submission.title}"
 
     def candidate_submission_statement(self):
         # identify a possible submission statement
@@ -209,14 +153,12 @@ class Post:
         # True or False -- has the time expired to add a submission statement?
         return ((self._created_time + timedelta(minutes=time_limit)) < datetime.now(timezone.utc))
 
-    def is_moderator_approved(self):
-        print(f"\tModerator approved? {self._submission.approved}")
-        return self._submission.approved
-
     def refresh(self, reddit):
+        # refresh the post with the latest version from Reddit to ensure any status changes etc are captured
         self._submission = praw.models.Submission(reddit, id = self._submission.id)    
 
     def submission_statement_previously_validated(self, janitor_name):
+        # have we already been through the validation process for this post's submission statement?
         if self._submission_statement_valid == True:
             return True
         
@@ -243,19 +185,11 @@ class Post:
                     break
         return self._post_was_serviced
 
-
-    def report_post(self, reason):
-        self._submission.report(reason)
-
-    def report_submission_statement(self, reason):
-        self._submission_statement.report(reason)
-
     def reply_to_post(self, text, pin=True, lock=False):
         posted_comment = self._submission.reply(text + self.bot_text)
         posted_comment.mod.distinguish(sticky=pin)
         if lock:
             posted_comment.mod.lock()
-
 
     def remove_post(self, reason, note):
         self._submission.mod.remove(spam=False, mod_note=note)
@@ -309,15 +243,13 @@ class Janitor:
 
 
     def refresh_posts(self):
-        # want to check if post.removed or post.approved, in order to do this,
-        # must refresh running list. No need to check the queue or query again
-        #
-        # this method is necessary because Posts dont have a Reddit property
+        # If ant to check if post.removed or post.approved, in order to do this, must refresh running list. No need to check the queue or query again
         for post in self.submissions:
             post.refresh(self.reddit)
 
 
     def fetch_submissions(self, type="new"):
+        # get the latest list of submissions to the subreddit
         self.run_start_time = datetime.now(timezone.utc)
         print("Fetching new submissions. Time now is: " + datetime.now(timezone.utc).strftime("%Y-%m-%d, %H:%M:%S") + " UTC") #Bug1
         submissions = set()
@@ -338,6 +270,8 @@ class Janitor:
 
 
     def update_submission_list(self):
+        # get the latest posts and remove any we don't need to deal with
+
         retrieved_submissions = self.fetch_submissions()
         self.submissions = self.submissions.union(retrieved_submissions) # We're adding to this list to ensure that we don't lose anything if there's a big influx of posts. Union prevents duplicates.
 
@@ -354,6 +288,7 @@ class Janitor:
         self.submissions = self.submissions - submissions_to_remove
 
     def remove_or_report_post(self, post, removal_reason):
+        # depending on the config setting, we can remove the post, or just report it
         if self.sub_settings.remove_posts:
             post.remove_post(self.sub_settings.removal_reason, removal_reason)
             print(f"\tRemoving post: \n\t\t{post._submission.title}\n\t\t{post._submission.permalink}")
@@ -364,6 +299,7 @@ class Janitor:
             print(f"\tReason: {removal_reason}\n---\n")
     
     def required_words_in_submission_statement(self, post):        
+        # check for words from the config list within the ss
         if len(self.sub_settings.required_words) > 0:
             for word in self.sub_settings.required_words:                            
                 if word not in post._submission_statement.body:
@@ -524,84 +460,6 @@ def go():
             print("\n")
             print("Restarting in 10 seconds...\n")
             time.sleep(10) #Pause 10s to avoid a rapid/blocking loop
-
-
-def run_forever():
-    five_min = 60 * 5
-    one_hr  = five_min * 12
-    print("Running run_forever\n")
-    while True:
-        #try:
-            fs = SSBSettings()
-            jannie = Janitor(cfg['DEFAULT']['subreddit'])
-            jannie.set_subreddit_settings(fs)
-            jannie.update_submission_list()
-            jannie.fetch_unmoderated()
-            counter = 1
-            while True:          
-                print("\r\n")      
-                # handle posts
-                jannie.handle_posts()
-                # every 5 min prune unmoderated
-                time.sleep(60) #THIS WAS CHANGED FROM five_min
-                jannie.prune_unmoderated()
-
-                # every 1 hour prune submissions
-                if counter == 0:
-                    jannie.prune_submissions()
-                counter = counter + 1
-                counter = counter % 12
-
-            # every hour, check all posts from the day
-            # every 5 minutes, check unmoderated queue
-       # except Exception as e:
-           # print(repr(e))
-            #print("Reddit outage? Restarting....")
-
-            time.sleep(60) #THIS WAS CHANGED FROM five_min
-
-def run():
-    five_min = 60 * 5
-    one_hr  = five_min * 12
-    while True:
-        fs = SSBSettings()
-        jannie = Janitor(cfg['DEFAULT']['subreddit'])
-        jannie.set_subreddit_settings(fs)
-        jannie.update_submission_list()
-        jannie.fetch_unmoderated()
-        counter = 1
-        while True:
-            print("\r\n")
-            # handle posts
-            jannie.handle_posts()
-            # every 5 min prune unmoderated
-            time.sleep(five_min)
-            jannie.prune_unmoderated()
-
-            # every 1 hour prune submissions
-            if counter == 0:
-                jannie.prune_submissions()
-            counter = counter + 1
-            counter = counter % 12
-
-        # every hour, check all posts from the day
-        # every 5 minutes, check unmoderated queue
-
-        time.sleep(five_min)
-
-
-def run_once():
-    fs = SSBSettings()
-    jannie = Janitor(cfg['DEFAULT']['subreddit'])
-    jannie.set_subreddit_settings(fs)
-    #posts = jannie.fetch_submissions()
-    #unmoderated = jannie.fetch_unmoderated()
-    jannie.update_submission_list()
-    jannie.handle_posts()
-    #for post in posts:
-    #    print(post.title)
-    #    print("___")
-
 
 if __name__ == "__main__":
     cfg = ConfigParser(interpolation = ExtendedInterpolation(), converters={'list': lambda x: [i.strip() for i in x.split(',')] if len(x) > 0 else []})
