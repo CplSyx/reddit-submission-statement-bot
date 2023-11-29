@@ -97,38 +97,12 @@ import traceback
 
 ###############################################################################
 ###
-### Helper class -- settings base class
-###
-###############################################################################
-
-class SubredditSettings:
-    def __init__(self):
-        # list of flair text, in lower case
-        self.low_effort_flair = []
-        self.removal_reason = str(cfg['TEXT']['removal_reason']).encode('raw_unicode_escape').decode('unicode_escape')
-        self.submission_statement_request_text = str(cfg['TEXT']['submission_statement_request']).encode('raw_unicode_escape').decode('unicode_escape')        
-        if int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement']) >= 1:
-            self.submission_statement_time_limit_minutes = int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement']) 
-        else:
-            self.submission_statement_time_limit_minutes = 1     
-        self.submission_statement_minimum_char_length = int(cfg['DEFAULT']['submission_statement_minimum_char_length'])
-        self.report_insufficient_length = True
-        self.remove_posts = cfg['DEFAULT'].getboolean('remove_posts')
-        self.pin_submission_statement_request = cfg['DEFAULT'].getboolean('pin_submission_statement_request')
-        self.pin_submission_statement_response = cfg['DEFAULT'].getboolean('pin_submission_statement_response')
-        self.required_words = cfg['DEFAULT'].getlist('required_words_in_submission_statement')
-        self.remove_request_comment = cfg['DEFAULT'].getboolean('bot_remove_request')
-
-###############################################################################
-###
 ### Load Settings
 ###
 ###############################################################################
 
-class SSBSettings():#(SubredditSettings):
+class SSBSettings():
     def __init__(self):
-        #super().__init__() #TODO Why? We can just use this class can't we? CONFIRM IF WORKING AS SubredditSettings CURRENTLY COMMENTED OUT
-
         self.subreddit = cfg['DEFAULT']['subreddit']
         #.encode('raw_unicode_escape').decode('unicode_escape') is required as ConfigParser will escape items such as "\n" to "\\n" and remove the newline functionality.
         # See here for why we've done it this way: https://stackoverflow.com/questions/1885181/how-to-un-escape-a-backslash-escaped-string/69772725#69772725
@@ -159,7 +133,7 @@ class SSBSettings():#(SubredditSettings):
 class Post:
     def __init__(self, submission, time_limit_minutes=30):
         self._submission = submission
-        self._created_time = datetime.fromtimestamp(submission.created_utc, tz=timezone.utc)#datetime.utcfromtimestamp(submission.created_utc)
+        self._created_time = datetime.fromtimestamp(submission.created_utc, tz=timezone.utc)
         self._submission_statement_checked = False
         self._submission_statement_valid = False
         self._submission_statement = None
@@ -233,7 +207,7 @@ class Post:
 
     def has_time_expired(self, time_limit):
         # True or False -- has the time expired to add a submission statement?
-        return ((self._created_time + timedelta(minutes=time_limit)) < datetime.now(timezone.utc))#datetime.utcnow())
+        return ((self._created_time + timedelta(minutes=time_limit)) < datetime.now(timezone.utc))
 
     def is_moderator_approved(self):
         print(f"\tModerator approved? {self._submission.approved}")
@@ -311,9 +285,9 @@ class Janitor:
         self.mod = self.subreddit.mod
         self.submissions = set()
         self.unmoderated = set()
-        self.sub_settings = SSBSettings()#SubredditSettings()
-        self.startup_time = datetime.now(timezone.utc)#datetime.utcnow()
-        self.run_start_time = datetime.now(timezone.utc)#datetime.utcnow()
+        self.sub_settings = SSBSettings()
+        self.startup_time = datetime.now(timezone.utc)
+        self.run_start_time = datetime.now(timezone.utc)
         self.action_counter = 0
 
     def set_subreddit_settings(self, sub_settings):
@@ -344,8 +318,8 @@ class Janitor:
 
 
     def fetch_submissions(self, type="new"):
-        self.run_start_time = datetime.now(timezone.utc)#datetime.utcnow()
-        print("Fetching new submissions. Time now is: " + datetime.now(timezone.utc).strftime("%Y-%m-%d, %H:%M:%S") + " UTC") #Bug1 #datetime.utcnow().strftime("%Y-%m-%d, %H:%M:%S") + " UTC") #Bug1
+        self.run_start_time = datetime.now(timezone.utc)
+        print("Fetching new submissions. Time now is: " + datetime.now(timezone.utc).strftime("%Y-%m-%d, %H:%M:%S") + " UTC") #Bug1
         submissions = set()
         if (type == "new") :
             newposts = self.subreddit.new()
