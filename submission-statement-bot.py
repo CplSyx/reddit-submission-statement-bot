@@ -20,7 +20,7 @@
 # 3) Too many posts...
 #      DONE What if we get an influx of posts and we can't deal with them all? At the moment every single post is reprocessed fully. We need to prune the "submission" list to remove anything that the bot has already validated before it hits handle_posts - ideally in update_submission_list
 # 4) Keyword requirement - IRTR etc.
-#       Implement a list of required words in the submission statement to avoid bots gaming the system and that people read the rules etc.
+#      DONE Implement a list of required words in the submission statement to avoid bots gaming the system and that people read the rules etc.
 
 # Rewrite
     # janitor fetch_submissions 
@@ -38,6 +38,10 @@
         # otherwise assume it's good and we will need to post the SS as a comment
 #### VALIDATE COMPLETE FLOW NOW AND REWRITE ABOVE
 # TODO: Remove any unused code 
+
+# Bug squashing TODO
+# 1) Bot seems to recheck old posts from before it was started. We don't want that. #Bug1
+# 2) Some issue exists with the way we're handling "checked" posts. They are appearing in the list again after already being checked/approved and are not reaching this point to remove them from checking again. Why? #Bug2
 
 
 #The current logic as per the code below 2023-11-02
@@ -102,8 +106,11 @@ class SubredditSettings:
         # list of flair text, in lower case
         self.low_effort_flair = []
         self.removal_reason = str(cfg['TEXT']['removal_reason']).encode('raw_unicode_escape').decode('unicode_escape')
-        self.submission_statement_request_text = str(cfg['TEXT']['submission_statement_request']).encode('raw_unicode_escape').decode('unicode_escape')
-        self.submission_statement_time_limit_minutes = int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement'])
+        self.submission_statement_request_text = str(cfg['TEXT']['submission_statement_request']).encode('raw_unicode_escape').decode('unicode_escape')        
+        if int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement']) >= 1:
+            self.submission_statement_time_limit_minutes = int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement']) 
+        else:
+            self.submission_statement_time_limit_minutes = 1     
         self.submission_statement_minimum_char_length = int(cfg['DEFAULT']['submission_statement_minimum_char_length'])
         self.report_insufficient_length = True
         self.remove_posts = cfg['DEFAULT'].getboolean('remove_posts')
@@ -126,7 +133,10 @@ class SSBSettings(SubredditSettings):
         #.encode('raw_unicode_escape').decode('unicode_escape') is required as ConfigParser will escape items such as "\n" to "\\n" and remove the newline functionality.
         # See here for why we've done it this way: https://stackoverflow.com/questions/1885181/how-to-un-escape-a-backslash-escaped-string/69772725#69772725
         self.removal_reason = str(cfg['TEXT']['removal_reason']).encode('raw_unicode_escape').decode('unicode_escape')
-        self.submission_statement_time_limit_minutes = int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement'])
+        if int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement']) >= 1:
+            self.submission_statement_time_limit_minutes = int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement']) 
+        else:
+            self.submission_statement_time_limit_minutes = 1   
         self.submission_statement_request_text = str(cfg['TEXT']['submission_statement_request']).encode('raw_unicode_escape').decode('unicode_escape')
         self.submission_statement_minimum_char_length = int(cfg['DEFAULT']['submission_statement_minimum_char_length'])
         self.report_insufficient_length = True
@@ -334,7 +344,7 @@ class Janitor:
 
     def fetch_submissions(self, type="new"):
         self.run_start_time = datetime.utcnow()
-        print("Fetching new submissions. Time now is: " + datetime.utcnow().strftime("%Y-%m-%d, %H:%M:%S") + " UTC")
+        print("Fetching new submissions. Time now is: " + datetime.utcnow().strftime("%Y-%m-%d, %H:%M:%S") + " UTC") #Bug1
         submissions = set()
         if (type == "new") :
             newposts = self.subreddit.new()
@@ -360,12 +370,29 @@ class Janitor:
         # Iterate through the submissions list, mark anything we need to remove and then remove it.
         submissions_to_remove = set()
         for post in self.submissions:
-            if post._submission.removed or post._submission_statement_checked: #TODO Some issue exists with the way we're handling "checked" posts. They are appearing in the list again after already being checked/approved and are not reaching this point to remove them from checking again. Why?
+            if post._submission.removed or post._submission_statement_checked: #Bug2
                 submissions_to_remove.add(post)
 
         # Can't "live" remove items from self.submissions otherwise we'll hit a "Set changed size during iteration" error, so remove afterwards
         self.submissions = self.submissions.difference(submissions_to_remove)
 
+    def remove_or_report_post(self, post, removal_reason):
+        if self.sub_settings.remove_posts:
+            post.remove_post(self.sub_settings.removal_reason, removal_reason)
+            print(f"\tRemoving post: \n\t\t{post._submission.title}\n\t\t{post._submission.permalink}")
+            print(f"\tReason: {removal_reason}\n---\n")
+        else:                            
+            post.report_post(removal_reason)
+            print(f"\tReporting post: \n\t\t{post._submission.title}\n\t\t{post._submission.permalink}")
+            print(f"\tReason: {removal_reason}\n---\n")
+    
+    def required_words_in_submission_statement(self, post):        
+        if len(self.sub_settings.required_words) > 0:
+            for word in self.sub_settings.required_words:                            
+                if word not in post._submission_statement.body:
+                    return False
+            print(f"\tSS has required word(s) \n\t{post._submission.permalink}")
+        return True
 
     def handle_posts(self):
         print("Handling posts")
@@ -401,13 +428,13 @@ class Janitor:
                 # Remove original comment by the bot
                 for top_level_comment in post._submission.comments:
                         if top_level_comment.author is not None and top_level_comment.author.name == cfg['CREDENTIALS']['username'] and "Submission Statement Request" in top_level_comment.body: 
-                            #Do not use "is" as that compares in-memory objects to be the same object, use == for value comparison
+                            # Do not use "is" as that compares in-memory objects to be the same object, use == for value comparison
 
                             # found the bot's request for a SS
                             # Remove all the comment's replies and delete the bot comment
                             post._submission.comments.replace_more() # Resolves the "More comments" text to get all comments
                             for comment in top_level_comment.replies.list():
-                                # list(): Return a flattened list of all comments. (awesome - no recursion needed!)
+                                # .list(): Return a flattened list of all comments. (awesome - no recursion needed!)
                                 comment.mod.remove()
                             top_level_comment.delete()
             
@@ -415,24 +442,22 @@ class Janitor:
                 if post.candidate_submission_statement():
                     print("\tPost has submission statement")                    
 
-                    # does the submission statement have the required length?
-                    #   no -> report or remove, depending on subreddit settings
-                    #   yes -> remove bot comment and pin reason
+                    # Does the submission statement have the required length?
+                    # If not, report or remove depending on subreddit settings
                     if not len(post._submission_statement.body) >= self.sub_settings.submission_statement_minimum_char_length:
                         removal_note = "Submission statement is too short"
-                        if self.sub_settings.remove_posts:
-                            post.remove_post(self.sub_settings.removal_reason, removal_note)
-                            print(f"\tRemoving post: \n\t\t{post._submission.title}\n\t\t{post._submission.permalink}")
-                            print(f"\tReason: {removal_note}\n---\n")
-                        else:                            
-                            post.report_post(removal_note)
-                            print(f"\tReporting post: \n\t\t{post._submission.title}\n\t\t{post._submission.permalink}")
-                            print(f"\tReason: {removal_note}\n---\n")
-                    else:
+                        self.remove_or_report_post(post, removal_note)
+                                            
+                    # Check for required words in the post if there are any set in the config
+                    # If one of the words isn't found, remove/report the post depending on subreddit settings
+                    elif not self.required_words_in_submission_statement(post):
+                        removal_note = "Submission statement does not contain the requisite words"
+                        self.remove_or_report_post(post, removal_note)
+                                            
+                    else:                        
                         print(f"\tSS has proper length \n\t{post._submission.permalink}")
 
-                        # We need to post the submission statement response. 
-                        
+                        # We need to post the submission statement response.                         
                         post.reply_to_post(self.submission_statement_quote_text(post._submission_statement, self.sub_settings.submission_reply_spoiler), pin=self.sub_settings.pin_submission_statement_response, lock=True)                        
                         self._submission_statement_valid = True
                         print("\tSubmission statement validated")
@@ -504,9 +529,13 @@ def go():
                 # handle posts
                 jannie.handle_posts()
                  
-                # Wait
-                print("Waiting " + cfg['DEFAULT']['bot_interval'] +" seconds")
-                time.sleep(int(cfg['DEFAULT']['bot_interval']))
+                # Wait (min 30 seconds)
+                if cfg['DEFAULT']['bot_interval'] > 30:
+                    wait_time = int(cfg['DEFAULT']['bot_interval'])
+                else:
+                    wait_time = 30
+                print("Waiting " + wait_time +" seconds")
+                time.sleep(wait_time) 
 
         except Exception as e:
             print("\n---ERROR---\n")
