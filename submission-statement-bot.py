@@ -40,8 +40,8 @@
 # TODO: Remove any unused code 
 
 # Bug squashing TODO
-# 1) DONE Bot seems to recheck old posts from before it was started. We don't want that. #Bug1
-# 2) Some issue exists with the way we're handling "checked" posts. They are appearing in the list again after already being checked/approved and are not reaching this point to remove them from checking again. Why? #Bug2
+# 1) DONE Bot seems to recheck old posts from before it was started. We don't want that. #Bug1 [Added in a post created timestamp check vs bot startup time]
+# 2) DONE Some issue exists with the way we're handling "checked" posts. They are appearing in the list again after already being checked/approved and are not reaching this point to remove them from checking again. Why? #Bug2 [Code was referencing "self" when setting checked/valid; in that context it was the adding those to the janitor and not to the post object]
 
 
 #The current logic as per the code below 2023-11-02
