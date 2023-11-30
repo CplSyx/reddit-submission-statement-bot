@@ -42,9 +42,11 @@
 
 # Bug squashing TODO
 # 1) DONE Bot seems to recheck old posts from before it was started. We don't want that. #Bug1 [Added in a post created timestamp check vs bot startup time]
-# 2) Reopened, still happening. Some issue exists with the way we're handling "checked" posts. They are appearing in the list again after already being checked/approved and are not reaching this point to remove them from checking again. Why? #Bug2 [Code was referencing "self" when setting checked/valid; in that context it was the adding those to the janitor and not to the post object]        
-# 3) Submissions are being repeatedly added to the "to check" list whilst we're waiting for the timer to expire #Bug3
-# 4) "Actions taken" counter not working correctly, doesn't increment per action taken! #Bug4
+# 2) DONE Reopened, still happening. Some issue exists with the way we're handling "checked" posts. They are appearing in the list again after already being checked/approved and are not reaching this point to remove them from checking again. Why? #Bug2 [Code was referencing "self" when setting checked/valid; in that context it was the adding those to the janitor and not to the post object]        
+#   The submission is being marked as "checked", so that once it's been handled we aren't adding it to the janitor.submissions list again. But the problem occurs every other loop - because it's missing from the list, it gets re-added next time around, and then removed again, and then re-added etc. 
+#   I think we need to hold a list of "handled" submissions so that we can remove them from the list. [janitor.checked_submissions set implemented, issue resolved]
+# 3) DONE Submissions are being repeatedly added to the "to check" list whilst we're waiting for the timer to expire #Bug3 [Needed to re-implement __eq__ to allow union function to dedupe properly]
+# 4) DONE "Actions taken" counter not working correctly, doesn't increment per action taken! #Bug4 [Indentation was wrong]
 
 from configparser import ConfigParser, ExtendedInterpolation
 from datetime import datetime, timedelta, timezone
@@ -96,6 +98,24 @@ class Post:
         self._post_was_serviced = False
         self.bot_text = "\n\n*" + str(cfg['TEXT']['bot_footer_text']).encode('raw_unicode_escape').decode('unicode_escape') + "*"
         self._time_limit = timedelta(hours=0, minutes=time_limit_minutes)
+
+    # https://www.pythontutorial.net
+    # Python automatically calls the __eq__ method of a class when you use the == operator to compare the instances of the class. 
+    # By default, Python uses the is operator if you don’t provide a specific implementation for the __eq__ method; we don't want that as the objects are different but we care about comparing the Reddit submission to avoid #Bug3
+    def __eq__(self, other):
+        return self._submission.permalink == other._submission.permalink
+    
+    # https://www.pythontutorial.net
+    # If a class overrides the __eq__ method (which we have), the objects of the class become unhashable by default.
+    # To make the Person class hashable, we also need to implement the __hash__ method.
+    def __hash__(self):
+        return hash(self._submission.permalink)
+    
+    # https://www.pythontutorial.net
+    # # Sometimes, it’s useful to have a string representation of an instance of a class. 
+    # To customize the string representation of a class instance, the class needs to implement the __str__ magic method.
+    def __str__(self):
+        return f"{self._submission.permalink} | {self._submission.title}"
 
     def candidate_submission_statement(self):
         # identify a possible submission statement
@@ -222,6 +242,7 @@ class Janitor:
         self.mod = self.subreddit.mod
         self.submissions = set()
         self.unmoderated = set()
+        self.checked_submissions = set()
         self.sub_settings = SSBSettings()
         self.startup_time = datetime.now(timezone.utc)
         self.run_start_time = datetime.now(timezone.utc)
@@ -269,14 +290,19 @@ class Janitor:
             if post.created_utc > startup_timestamp: # Ignore posts created before the bot was started
                 submissions.add(Post(post))
 
+        # Remove anything we've already seen #Bug2
+        submissions = submissions - self.checked_submissions
+
         return submissions
 
 
-    def update_submission_list(self): #Bug3 don't add the same post back to the set...
+    def update_submission_list(self): 
         # get the latest posts and remove any we don't need to deal with
 
         retrieved_submissions = self.fetch_submissions()
-        self.submissions = self.submissions.union(retrieved_submissions) # We're adding to this list to ensure that we don't lose anything if there's a big influx of posts. Union prevents duplicates.
+        self.submissions = self.submissions.union(retrieved_submissions) 
+        # We're adding to this list to ensure that we don't lose anything if there's a big influx of posts. Union prevents duplicates, but as per #Bug3 this doesnt remove duplicate Reddit submissions. Why? 
+        # Because items in self.submissions are objects of type Post, and each one of these is a different wrapper even if the actual Reddit content is the same. As such we have to utilise the "eq" method within the Post class to allow a comparison.
 
         # Refresh all the posts we have in the list to ensure their status is correct (primarily we're concerned about "removed")
         self.refresh_posts()
@@ -407,9 +433,11 @@ class Janitor:
                         print(f"\tReason: {removal_note}\n---\n")
                     
                     post._submission_statement_valid = False
-                    self.action_counter += 1 #Bug4 
+                
+                self.action_counter += 1 #Bug4                  
+                self.checked_submissions.add(post)
+                post._submission_statement_checked = True
 
-                post._submission_statement_checked = True   
             else:
                 print("\tTime has not expired - skipping post")
             
