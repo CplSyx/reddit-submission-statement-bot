@@ -11,7 +11,7 @@ submission_statement_minimum_char_length = 100
 minutes_to_wait_for_submission_statement = 1
 
 # Pin the submission statement request comment?
-pin_submission_statement_request = False
+pin_submission_statement_request = True
 
 # Pin the submission statement response / explanation comment?
 pin_submission_statement_response = False
