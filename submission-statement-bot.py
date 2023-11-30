@@ -17,6 +17,7 @@
 #      DONE What if we get an influx of posts and we can't deal with them all? At the moment every single post is reprocessed fully. We need to prune the "submission" list to remove anything that the bot has already validated before it hits handle_posts - ideally in update_submission_list
 # 4) Keyword requirement - IRTR etc.
 #      DONE Implement a list of required words in the submission statement to avoid bots gaming the system and that people read the rules etc.
+# 5) A user deletes their post between the SS request and us checking it. Currently it remains on the list to be checked and is removed, but that does nothing in reality as it's already deleted. Can we deal with this more gracefully by checking for a "deleted" flag? Do we care?
 
 # Rewrite
     # janitor fetch_submissions 
@@ -39,6 +40,7 @@
 # DONE Some of this code feels redundant, can we simplify? Remove any unused code 
 # Document code below inline DONE, config file variables DONE, and github readme
 # Validate flow DONE and capture this as a rewrite of the above section
+# Edge cases
 
 # Bug squashing TODO
 # 1) DONE Bot seems to recheck old posts from before it was started. We don't want that. #Bug1 [Added in a post created timestamp check vs bot startup time]
