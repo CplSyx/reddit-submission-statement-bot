@@ -1,22 +1,57 @@
+#### General config settings
 [DEFAULT]
+
+# Name of the subreddit we are managing
 subreddit = SubReddit
+
+# Minimum character length of submission statement. Zero to any number desired.
 submission_statement_minimum_char_length = 100
+
+# Wait period for user to reply with a valid submission statement, in minutes. One to any amount of time. Values lower than one are overridden.
 minutes_to_wait_for_submission_statement = 1
+
+# Pin the submission statement request comment?
 pin_submission_statement_request = False
+
+# Pin the submission statement response / explanation comment?
 pin_submission_statement_response = False
+
+# *Remove* posts, or just report them for moderator attention? True = remove, False = report
 remove_posts = True
+
+# Hide the user's submission statement in spoiler tags? This is of use if we wish to obscure the post details.
 use_spolier_tags = True
+
+# How often does the bot run, in seconds. Thirty to any number. Values lower than thirty are overridden.
 bot_interval = 60
+
+# Do we remove the request statement that the bot makes when we are validating the submission statement?
 bot_remove_request = True
+
+# Comma-separated list of words that must be included in the submission statement. Used to combat spam or low effort posters. Example: irtr, potato, banana
 required_words_in_submission_statement = 
 
+#### Template text that is used by the bot.
+## This can be edited as required, and we can reference other config values directly by utilising the format ${SECTION:variable} 
 [TEXT]
+
+# Removal reason text when removing a post
 removal_reason = We require that posters submit an explanation (a.k.a. a submission statement) for why their post fits the requirements for r/${DEFAULT:subreddit}. Your post has been removed as it is missing this requirement.\n\nIf you wish to share your post with the community, you will need to resubmit your link along with a submission statement of at least ${DEFAULT:submission_statement_minimum_char_length} characters.
+
+# Submission statement request text when requesting the user reply with a submission statement
 submission_statement_request = We require that posters submit an explanation (a.k.a. a submission statement) for why their post fits the requirements for r/${DEFAULT:subreddit}. \n\nPlease **reply to this comment** within the next ${DEFAULT:minutes_to_wait_for_submission_statement} minutes with a suitable submission statement that is at least ${DEFAULT:submission_statement_minimum_char_length} characters in length.
+
+# Footer text to apply at the bottom of the bot's comments. Default matches that of automoderator
 bot_footer_text = I am a bot, and this action was performed automatically. Please [contact the moderators of this subreddit](https://www.reddit.com/message/compose/?to=/r/${DEFAULT:subreddit}) if you have any questions or concerns.
 
+#### Credentials for the bot's account, and the application details
+## See https://www.reddit.com/prefs/apps for the latter
 [CREDENTIALS]
+
+# Bot account username and password
 username =  submission-statement-bot
 password = P@55w0rd!
+
+# Application client ID and secret
 client_id = clientid
 client_secret = clientsecret
