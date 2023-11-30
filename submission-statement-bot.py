@@ -40,9 +40,11 @@
 # Document code below inline DONE, config file variables DONE, and github readme
 # Validate flow DONE and capture this as a rewrite of the above section
 
-# Bug squashing
+# Bug squashing TODO
 # 1) DONE Bot seems to recheck old posts from before it was started. We don't want that. #Bug1 [Added in a post created timestamp check vs bot startup time]
-# 2) DONE Some issue exists with the way we're handling "checked" posts. They are appearing in the list again after already being checked/approved and are not reaching this point to remove them from checking again. Why? #Bug2 [Code was referencing "self" when setting checked/valid; in that context it was the adding those to the janitor and not to the post object]        
+# 2) Reopened, still happening. Some issue exists with the way we're handling "checked" posts. They are appearing in the list again after already being checked/approved and are not reaching this point to remove them from checking again. Why? #Bug2 [Code was referencing "self" when setting checked/valid; in that context it was the adding those to the janitor and not to the post object]        
+# 3) Submissions are being repeatedly added to the "to check" list whilst we're waiting for the timer to expire #Bug3
+# 4) "Actions taken" counter not working correctly, doesn't increment per action taken! #Bug4
 
 from configparser import ConfigParser, ExtendedInterpolation
 from datetime import datetime, timedelta, timezone
@@ -249,7 +251,7 @@ class Janitor:
             post.refresh(self.reddit)
 
 
-    def fetch_submissions(self, type="new"):
+    def fetch_submissions(self, type="new"): 
         # get the latest list of submissions to the subreddit
         self.run_start_time = datetime.now(timezone.utc)
         print("Fetching new submissions. Time now is: " + datetime.now(timezone.utc).strftime("%Y-%m-%d, %H:%M:%S") + " UTC") #Bug1
@@ -270,7 +272,7 @@ class Janitor:
         return submissions
 
 
-    def update_submission_list(self):
+    def update_submission_list(self): #Bug3 don't add the same post back to the set...
         # get the latest posts and remove any we don't need to deal with
 
         retrieved_submissions = self.fetch_submissions()
@@ -405,7 +407,7 @@ class Janitor:
                         print(f"\tReason: {removal_note}\n---\n")
                     
                     post._submission_statement_valid = False
-                    self.action_counter += 1
+                    self.action_counter += 1 #Bug4 
 
                 post._submission_statement_checked = True   
             else:
