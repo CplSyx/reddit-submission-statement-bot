@@ -32,12 +32,13 @@
         # if the time limit has passed, check for a valid SS
         # check the length, if too short remove/report
         # otherwise assume it's good and we will need to post the SS as a comment
-#### VALIDATE COMPLETE FLOW NOW AND REWRITE ABOVE
+
 # TODO: 
 # DONE Why are we excluding text posts, need to include that again for future use.
 # DONE Time limit seems to be set in multiple locations - need to walk through the logic to determine where it's getting taken from
 # DONE Some of this code feels redundant, can we simplify? Remove any unused code 
-# Document code below DONE, config file variables, and github readme
+# Document code below inline DONE, config file variables DONE, and github readme
+# Validate flow DONE and capture this as a rewrite of the above section
 
 # Bug squashing
 # 1) DONE Bot seems to recheck old posts from before it was started. We don't want that. #Bug1 [Added in a post created timestamp check vs bot startup time]
