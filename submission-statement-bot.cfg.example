@@ -8,7 +8,7 @@ subreddit = SubReddit
 submission_statement_minimum_char_length = 100
 
 # Wait period for user to reply with a valid submission statement, in minutes. One to any amount of time. Values lower than one are overridden.
-minutes_to_wait_for_submission_statement = 1
+minutes_to_wait_for_submission_statement = 5
 
 # Pin the submission statement request comment?
 pin_submission_statement_request = True
@@ -23,7 +23,7 @@ remove_posts = True
 use_spolier_tags = True
 
 # How often does the bot run, in seconds. Thirty to any number. Values lower than thirty are overridden.
-bot_interval = 60
+bot_interval = 300
 
 # Do we remove the request statement that the bot makes when we are validating the submission statement?
 bot_remove_request = True
