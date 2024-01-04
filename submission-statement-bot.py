@@ -264,9 +264,6 @@ class Janitor:
         self.run_start_time = datetime.now(timezone.utc)
         self.action_counter = 0
 
-    def set_subreddit_settings(self, sub_settings):
-        self.sub_settings = sub_settings
-
     def submission_statement_quote_text(self, ss, spoilers):
         # Construct the quoted message, by quoting OP's submission statement
 
@@ -283,7 +280,7 @@ class Janitor:
 
 
     def refresh_posts(self):
-        # If ant to check if post.removed or post.approved, in order to do this, must refresh running list. No need to check the queue or query again
+        # If we want to check if post.removed or post.approved, in order to do this, must refresh running list. No need to check the queue or query again
         for post in self.submissions:
             post.refresh(self.reddit)
 
@@ -475,10 +472,7 @@ def go():
     print("Setting subreddit: "+ cfg['DEFAULT']['subreddit'])
     jannie = Janitor(cfg['DEFAULT']['subreddit'])
 
-    # Settings load
-    fs = SSBSettings()
-    jannie.set_subreddit_settings(fs)
-    
+    # Process posts - run forever    
     while True:
         try:
             
@@ -511,6 +505,4 @@ def go():
 if __name__ == "__main__":
     cfg = ConfigParser(interpolation = ExtendedInterpolation(), converters={'list': lambda x: [i.strip() for i in x.split(',')] if len(x) > 0 else []})
     cfg.read("submission-statement-bot.cfg")
-    #run_once()
-    #run_forever()
     go()
