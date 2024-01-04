@@ -469,9 +469,16 @@ def go():
     jannie = Janitor(cfg['DEFAULT']['subreddit'])
 
     # Settings load
-    fs = SSBSettings()
-    jannie.set_subreddit_settings(fs)
-    print("Settings loaded")
+    try:
+        fs = SSBSettings()
+        jannie.set_subreddit_settings(fs)
+        print("Bot settings loaded successfully")
+    except Exception as e:
+        print("Error trying to load bot settings. Exiting")
+        print(repr(e))
+        traceback.print_exc()
+        exit()
+    
     while True:
         try:
             
