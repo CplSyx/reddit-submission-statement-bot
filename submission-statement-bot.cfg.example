@@ -35,8 +35,11 @@ required_words_in_submission_statement =
 ## This can be edited as required, and we can reference other config values directly by utilising the format ${SECTION:variable} 
 [TEXT]
 
-# Removal reason text when removing a post
+# Removal reason text to user when removing a post
 removal_reason = We require that posters submit an explanation (a.k.a. a submission statement) for why their post fits the requirements for r/${DEFAULT:subreddit}. Your post has been removed as it is missing this requirement.\n\nIf you wish to share your post with the community, you will need to resubmit your link along with a submission statement of at least ${DEFAULT:submission_statement_minimum_char_length} characters.
+
+# Report reason text to user when reporting a post for moderator attention
+report_reason = We require that posters submit an explanation (a.k.a. a submission statement) for why their post fits the requirements for r/${DEFAULT:subreddit}.\n\nYour post has been reported for moderator attention as you have not provided this.
 
 # Submission statement request text when requesting the user reply with a submission statement
 submission_statement_request = We require that posters submit an explanation (a.k.a. a submission statement) for why their post fits the requirements for r/${DEFAULT:subreddit}. \n\nPlease **reply to this comment** within the next ${DEFAULT:minutes_to_wait_for_submission_statement} minutes with a suitable submission statement that is at least ${DEFAULT:submission_statement_minimum_char_length} characters in length.
