@@ -64,24 +64,31 @@ import traceback
 
 class SSBSettings():
     def __init__(self):
-        self.subreddit = cfg['DEFAULT']['subreddit']
-        #.encode('raw_unicode_escape').decode('unicode_escape') is required as ConfigParser will escape items such as "\n" to "\\n" and remove the newline functionality.
-        # See here for why we've done it this way: https://stackoverflow.com/questions/1885181/how-to-un-escape-a-backslash-escaped-string/69772725#69772725
-        self.removal_reason = str(cfg['TEXT']['removal_reason']).encode('raw_unicode_escape').decode('unicode_escape')
-        self.report_reason = str(cfg['TEXT']['report_reason']).encode('raw_unicode_escape').decode('unicode_escape')
-        if int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement']) >= 1: # Enforce 1 minute minimum
-            self.submission_statement_time_limit_minutes = int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement']) 
-        else:
-            self.submission_statement_time_limit_minutes = 1   
-        self.submission_statement_request_text = str(cfg['TEXT']['submission_statement_request']).encode('raw_unicode_escape').decode('unicode_escape')
-        self.submission_statement_minimum_char_length = int(cfg['DEFAULT']['submission_statement_minimum_char_length'])
-        self.report_insufficient_length = True
-        self.remove_posts = cfg['DEFAULT'].getboolean('remove_posts')
-        self.pin_submission_statement_request = cfg['DEFAULT'].getboolean('pin_submission_statement_request')
-        self.pin_submission_statement_response = cfg['DEFAULT'].getboolean('pin_submission_statement_response')
-        self.submission_reply_spoiler = cfg['DEFAULT'].getboolean('use_spolier_tags')
-        self.required_words = cfg['DEFAULT'].getlist('required_words_in_submission_statement')
-        self.remove_request_comment = cfg['DEFAULT'].getboolean('bot_remove_request')
+        try:
+            self.subreddit = cfg['DEFAULT']['subreddit']
+            #.encode('raw_unicode_escape').decode('unicode_escape') is required as ConfigParser will escape items such as "\n" to "\\n" and remove the newline functionality.
+            # See here for why we've done it this way: https://stackoverflow.com/questions/1885181/how-to-un-escape-a-backslash-escaped-string/69772725#69772725
+            self.removal_reason = str(cfg['TEXT']['removal_reason']).encode('raw_unicode_escape').decode('unicode_escape')
+            self.report_reason = str(cfg['TEXT']['report_reason']).encode('raw_unicode_escape').decode('unicode_escape')
+            if int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement']) >= 1: # Enforce 1 minute minimum
+                self.submission_statement_time_limit_minutes = int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement']) 
+            else:
+                self.submission_statement_time_limit_minutes = 1   
+            self.submission_statement_request_text = str(cfg['TEXT']['submission_statement_request']).encode('raw_unicode_escape').decode('unicode_escape')
+            self.submission_statement_minimum_char_length = int(cfg['DEFAULT']['submission_statement_minimum_char_length'])
+            self.report_insufficient_length = True
+            self.remove_posts = cfg['DEFAULT'].getboolean('remove_posts')
+            self.pin_submission_statement_request = cfg['DEFAULT'].getboolean('pin_submission_statement_request')
+            self.pin_submission_statement_response = cfg['DEFAULT'].getboolean('pin_submission_statement_response')
+            self.submission_reply_spoiler = cfg['DEFAULT'].getboolean('use_spolier_tags')
+            self.required_words = cfg['DEFAULT'].getlist('required_words_in_submission_statement')
+            self.remove_request_comment = cfg['DEFAULT'].getboolean('bot_remove_request')
+            print("Bot settings loaded successfully")
+        except Exception as e:
+            print("\nERROR trying to load bot settings. Exiting. Error details follow: ")
+            print(repr(e))
+            traceback.print_exc()
+            exit()
     
 
 ###############################################################################
@@ -469,15 +476,8 @@ def go():
     jannie = Janitor(cfg['DEFAULT']['subreddit'])
 
     # Settings load
-    try:
-        fs = SSBSettings()
-        jannie.set_subreddit_settings(fs)
-        print("Bot settings loaded successfully")
-    except Exception as e:
-        print("Error trying to load bot settings. Exiting")
-        print(repr(e))
-        traceback.print_exc()
-        exit()
+    fs = SSBSettings()
+    jannie.set_subreddit_settings(fs)
     
     while True:
         try:
