@@ -221,6 +221,10 @@ class Post:
         formatted_note = "\n\n(Removal reason: "+ note +")"
         removal_comment = self._submission.reply(reason + formatted_note + self.bot_text)
         removal_comment.mod.distinguish(sticky=True)
+    
+    def report_post(self, reason):
+        self._submission.report(reason)
+        self._submission_statement_checked = True
 
 
 
