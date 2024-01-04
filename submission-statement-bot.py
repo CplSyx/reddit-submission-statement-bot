@@ -68,6 +68,7 @@ class SSBSettings():
         #.encode('raw_unicode_escape').decode('unicode_escape') is required as ConfigParser will escape items such as "\n" to "\\n" and remove the newline functionality.
         # See here for why we've done it this way: https://stackoverflow.com/questions/1885181/how-to-un-escape-a-backslash-escaped-string/69772725#69772725
         self.removal_reason = str(cfg['TEXT']['removal_reason']).encode('raw_unicode_escape').decode('unicode_escape')
+        self.report_reason = str(cfg['TEXT']['report_reason']).encode('raw_unicode_escape').decode('unicode_escape')
         if int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement']) >= 1: # Enforce 1 minute minimum
             self.submission_statement_time_limit_minutes = int(cfg['DEFAULT']['minutes_to_wait_for_submission_statement']) 
         else:
@@ -216,14 +217,16 @@ class Post:
         if lock:
             posted_comment.mod.lock()
 
-    def remove_post(self, reason, note):
-        self._submission.mod.remove(spam=False, mod_note=note)
-        formatted_note = "\n\n(Removal reason: "+ note +")"
-        removal_comment = self._submission.reply(reason + formatted_note + self.bot_text)
+    def remove_post(self, post_reply, mod_note):
+        self._submission.mod.remove(spam=False, mod_note=mod_note)
+        formatted_note = "\n\n(Removal reason: "+ mod_note +")"
+        removal_comment = self._submission.reply(post_reply + formatted_note + self.bot_text)
         removal_comment.mod.distinguish(sticky=True)
     
-    def report_post(self, reason):
-        self._submission.report(reason)
+    def report_post(self, post_reply, mod_note):
+        self._submission.report(mod_note)
+        reported_comment = self._submission.reply(post_reply + self.bot_text)
+        reported_comment.mod.distinguish(sticky=True)
         self._submission_statement_checked = True
 
 
@@ -322,16 +325,16 @@ class Janitor:
         # Can't "live" remove items from self.submissions otherwise we'll hit a "Set changed size during iteration" error, so remove afterwards
         self.submissions = self.submissions - submissions_to_remove
 
-    def remove_or_report_post(self, post, removal_reason):
+    def remove_or_report_post(self, post, mod_note):
         # depending on the config setting, we can remove the post, or just report it
         if self.sub_settings.remove_posts:
-            post.remove_post(self.sub_settings.removal_reason, removal_reason)
+            post.remove_post(self.sub_settings.removal_reason, mod_note)
             print(f"\tRemoving post: \n\t\t{post._submission.title}\n\t\t{post._submission.permalink}")
-            print(f"\tReason: {removal_reason}\n---\n")
+            print(f"\tReason: {mod_note}\n---\n")
         else:                            
-            post.report_post(removal_reason)
+            post.report_post(self.sub_settings.report_reason, mod_note)
             print(f"\tReporting post: \n\t\t{post._submission.title}\n\t\t{post._submission.permalink}")
-            print(f"\tReason: {removal_reason}\n---\n")
+            print(f"\tReason: {mod_note}\n---\n")
     
     def required_words_in_submission_statement(self, post):        
         # check for words from the config list within the ss
@@ -393,14 +396,14 @@ class Janitor:
                     # Does the submission statement have the required length?
                     # If not, report or remove depending on subreddit settings
                     if not len(post._submission_statement.body) >= self.sub_settings.submission_statement_minimum_char_length:
-                        removal_note = "Submission statement is too short"
-                        self.remove_or_report_post(post, removal_note)
+                        mod_note = "Submission statement is too short"
+                        self.remove_or_report_post(post, mod_note)
                                             
                     # Check for required words in the post if there are any set in the config
                     # If one of the words isn't found, remove/report the post depending on subreddit settings
                     elif not self.required_words_in_submission_statement(post):
-                        removal_note = "Submission statement does not contain the requisite words"
-                        self.remove_or_report_post(post, removal_note)
+                        mod_note = "Submission statement does not contain the requisite words"
+                        self.remove_or_report_post(post, mod_note)
                                             
                     else:                        
                         print("\tSS has proper length")
@@ -428,15 +431,15 @@ class Janitor:
                                     top_level_comment.delete()
 
                     # Report / Remove                
-                    removal_note = "No submission statement provided"                               
+                    mod_note = "No submission statement provided"                               
                     if self.sub_settings.remove_posts:
-                        post.remove_post(self.sub_settings.removal_reason, removal_note)
+                        post.remove_post(self.sub_settings.removal_reason, mod_note)
                         print(f"\tRemoving post: \n\t{post._submission.title}\n\t{post._submission.permalink}")
-                        print(f"\tReason: {removal_note}\n---\n")   
+                        print(f"\tReason: {mod_note}\n---\n")   
                     else:
-                        post.report_post(removal_note)
+                        post.report_post(self.sub_settings.report_reason, mod_note)
                         print(f"\tReporting post: \n\t{post._submission.title}\n\t{post._submission.permalink}")
-                        print(f"\tReason: {removal_note}\n---\n")
+                        print(f"\tReason: {mod_note}\n---\n")
                     
                     post._submission_statement_valid = False
                 
