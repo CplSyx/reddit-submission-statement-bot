@@ -18,6 +18,7 @@
 # 4) Keyword requirement - IRTR etc.
 #      DONE Implement a list of required words in the submission statement to avoid bots gaming the system and that people read the rules etc.
 # 5) A user deletes their post between the SS request and us checking it. Currently it remains on the list to be checked and is removed, but that does nothing in reality as it's already deleted. Can we deal with this more gracefully by checking for a "deleted" flag? Do we care?
+#      DONE - It doesn't matter.. Removal or reporting won't work (can't take mod actions on a deleted post) but that doesn't seem to matter as we aren't validating the PRAW request itself and so the bot carries on anyway.
 
 # Rewrite
     # janitor fetch_submissions 
@@ -38,17 +39,17 @@
 # DONE Why are we excluding text posts, need to include that again for future use.
 # DONE Time limit seems to be set in multiple locations - need to walk through the logic to determine where it's getting taken from
 # DONE Some of this code feels redundant, can we simplify? Remove any unused code 
-# Document code below inline DONE, config file variables DONE, and github readme
+# DONE Document code below inline DONE, config file variables DONE, and github readme DONE
 # Validate flow DONE and capture this as a rewrite of the above section
-# Edge cases
+# DONE Edge cases
 
-# Bug squashing TODO
+# Bug squashing
 # 1) DONE Bot seems to recheck old posts from before it was started. We don't want that. #Bug1 [Added in a post created timestamp check vs bot startup time]
 # 2) DONE Reopened, still happening. Some issue exists with the way we're handling "checked" posts. They are appearing in the list again after already being checked/approved and are not reaching this point to remove them from checking again. Why? #Bug2 [Code was referencing "self" when setting checked/valid; in that context it was the adding those to the janitor and not to the post object]        
 #   The submission is being marked as "checked", so that once it's been handled we aren't adding it to the janitor.submissions list again. But the problem occurs every other loop - because it's missing from the list, it gets re-added next time around, and then removed again, and then re-added etc. 
 #   I think we need to hold a list of "handled" submissions so that we can remove them from the list. [janitor.checked_submissions set implemented, issue resolved]
 # 3) DONE Submissions are being repeatedly added to the "to check" list whilst we're waiting for the timer to expire #Bug3 [Needed to re-implement __eq__ to allow union function to dedupe properly]
-# 4) DONE "Actions taken" counter not working correctly, doesn't increment per action taken! #Bug4 [Indentation was wrong]
+# 4) DONE "Actions taken" counter not working correctly, doesn't increment per action taken! #Bug4 [Indentation was wrong. Now moved to centralised function.]
 
 from configparser import ConfigParser, ExtendedInterpolation
 from datetime import datetime, timedelta, timezone
@@ -263,6 +264,7 @@ class Janitor:
         self.startup_time = datetime.now(timezone.utc)
         self.run_start_time = datetime.now(timezone.utc)
         self.action_counter = 0
+        self.post_counter = 0
 
     def submission_statement_quote_text(self, ss, spoilers):
         # Construct the quoted message, by quoting OP's submission statement
@@ -339,6 +341,7 @@ class Janitor:
             post.report_post(self.sub_settings.report_reason, mod_note)
             print(f"\tReporting post: \n\t\t{post._submission.title}\n\t\t{post._submission.permalink}")
             print(f"\tReason: {mod_note}\n---\n")
+        self.action_counter += 1 #Bug4
     
     def required_words_in_submission_statement(self, post):        
         # check for words from the config list within the ss
@@ -367,7 +370,7 @@ class Janitor:
                 text = "###Submission Statement Request\n\n" + self.sub_settings.submission_statement_request_text
                 post.reply_to_post(text, pin=self.sub_settings.pin_submission_statement_request, lock=False)
                 post._post_was_serviced = True
-                self.action_counter += 1
+                self.post_counter += 1
                 continue
 
             else:
@@ -381,17 +384,18 @@ class Janitor:
                 print("\tTime has expired - taking action")
 
                 # Remove original comment by the bot
-                for top_level_comment in post._submission.comments:
-                        if top_level_comment.author is not None and top_level_comment.author.name == cfg['CREDENTIALS']['username'] and "Submission Statement Request" in top_level_comment.body: 
-                            # Do not use "is" as that compares in-memory objects to be the same object, use == for value comparison
+                if self.sub_settings.remove_request_comment:
+                    for top_level_comment in post._submission.comments:
+                            if top_level_comment.author is not None and top_level_comment.author.name == cfg['CREDENTIALS']['username'] and "Submission Statement Request" in top_level_comment.body: 
+                                # Do not use "is" as that compares in-memory objects to be the same object, use == for value comparison
 
-                            # found the bot's request for a SS
-                            # Remove all the comment's replies and delete the bot comment
-                            post._submission.comments.replace_more() # Resolves the "More comments" text to get all comments
-                            for comment in top_level_comment.replies.list():
-                                # .list(): Return a flattened list of all comments. (awesome - no recursion needed!)
-                                comment.mod.remove()
-                            top_level_comment.delete()
+                                # found the bot's request for a SS
+                                # Remove all the comment's replies and delete the bot comment
+                                post._submission.comments.replace_more() # Resolves the "More comments" text to get all comments
+                                for comment in top_level_comment.replies.list():
+                                    # .list(): Return a flattened list of all comments. (awesome - no recursion needed!)
+                                    comment.mod.remove()
+                                top_level_comment.delete()
             
                 # Check if there is a submission statement                
                 if post.candidate_submission_statement():
@@ -420,45 +424,20 @@ class Janitor:
                 else:
                     print("\tPost does NOT have submission statement")
 
-                    if self.sub_settings.remove_request_comment:
-                        # Remove original comment by the bot
-                        for top_level_comment in post._submission.comments:
-                                if top_level_comment.author is not None and top_level_comment.author.name == cfg['CREDENTIALS']['username'] and "Submission Statement Request" in top_level_comment.body: 
-                                    #Do not use "is" as that compares in-memory objects to be the same object, use == to compare values
-
-                                    # Found the bot's request for a SS
-                                    # Remove all the comment's replies and delete the bot comment
-                                    post._submission.comments.replace_more() # Resolves the "More comments" text to get all comments
-                                    for comment in top_level_comment.replies.list():
-                                        # list(): Return a flattened list of all comments. (awesome - no recursion needed!)
-                                        comment.mod.remove()
-                                    top_level_comment.delete()
-
                     # Report / Remove                
-                    mod_note = "No submission statement provided"                               
-                    if self.sub_settings.remove_posts:
-                        post.remove_post(self.sub_settings.removal_reason, mod_note)
-                        print(f"\tRemoving post: \n\t{post._submission.title}\n\t{post._submission.permalink}")
-                        print(f"\tReason: {mod_note}\n---\n")   
-                    else:
-                        post.report_post(self.sub_settings.report_reason, mod_note)
-                        print(f"\tReporting post: \n\t{post._submission.title}\n\t{post._submission.permalink}")
-                        print(f"\tReason: {mod_note}\n---\n")
-                    
+                    mod_note = "No submission statement provided"
+                    self.remove_or_report_post(post, mod_note)                                                                       
                     post._submission_statement_valid = False
-                
-                self.action_counter += 1 #Bug4                  
+                              
                 self.checked_submissions.add(post)
                 post._submission_statement_checked = True
 
             else:
                 print("\tTime has not expired - skipping post")
             
-
         print("  Done in " + str(datetime.now(timezone.utc) - self.run_start_time) + ".")
-        print(str(self.action_counter) + " actions taken. Bot runtime " + str(datetime.now(timezone.utc) - self.startup_time) + ".")
-        #print("  Done in " + str(datetime.utcnow() - self.run_start_time) + ".")
-        #print(str(self.action_counter) + " actions taken. Bot runtime " + str(datetime.utcnow() - self.startup_time) + ".")
+        print(str(self.post_counter) + " posts seen, " + str(self.action_counter) + " actions taken, " + str(self.post_counter - self.action_counter) + " valid posts.")
+        print("Bot runtime " + str(datetime.now(timezone.utc) - self.startup_time) + ".")       
 
 ###############################################################################
 ###
