@@ -1,3 +1,10 @@
+# Important: Archived
+This bot has been ported to Reddit's app platform, Devvit. It can be found here as [post-context-bot](https://developers.reddit.com/apps/post-context-bot), with the source code [available here](https://github.com/CplSyx/post-context-bot).
+
+No further development will take place on this repository.
+
+***
+
 # Reddit Submission Statement Bot
 
 This is a bot for Reddit, to manage "submission statements" on posts. These require that a user submits a justification for why the post meets the requirements of the subreddit (or that a user has read the rules for example), therefore reducing spam and other non-conforming content.
